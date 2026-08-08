@@ -1,0 +1,49 @@
+# Python
+
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+
+.venv/
+.venv312/
+venv/
+env/
+
+# Large datasets
+
+datasets/fabric_defect/
+
+# Large trained models
+
+models/energy_model.pkl
+models/fabric_defect_model.keras
+
+# Generated/history files
+
+history/
+reports/
+inspection_history.csv
+inspection_report.pdf
+test.pdf
+
+# Temporary files
+
+*.bak
+*.tmp
+*~
+tempCodeRunnerFile.ipynb
+
+# Streamlit
+
+.streamlit/
+
+# OS
+
+.DS_Store
+Thumbs.db
+
+# Jupyter
+
+.ipynb_checkpoints/
