@@ -1085,6 +1085,43 @@ PRODUCTIVITY_MODEL_PATH = BASE_DIR / "models" / "productivity_model.pkl"
 ENERGY_MODEL_PATH = BASE_DIR / "models" / "energy_model.pkl"
 FABRIC_MODEL_PATH = BASE_DIR / "models" / "fabric_defect_model.keras"
 
+
+# ==================== DOWNLOAD LARGE MODELS IF MISSING ====================
+
+import urllib.request
+
+
+ENERGY_MODEL_URL = (
+    "https://github.com/veeradineshd/SilkTrace/releases/download/"
+    "v1.0.0/energy_model.pkl"
+)
+
+FABRIC_MODEL_URL = (
+    "https://github.com/veeradineshd/SilkTrace/releases/download/"
+    "v1.0.0/fabric_defect_model.keras"
+)
+
+
+def ensure_large_models():
+    """Download large ML models from the GitHub Release if they are missing."""
+
+    ENERGY_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    if not ENERGY_MODEL_PATH.exists():
+        st.info("⬇️ Downloading Energy Prediction model...")
+        urllib.request.urlretrieve(
+            ENERGY_MODEL_URL,
+            ENERGY_MODEL_PATH
+        )
+
+    if not FABRIC_MODEL_PATH.exists():
+        st.info("⬇️ Downloading Fabric Defect Detection model...")
+        urllib.request.urlretrieve(
+            FABRIC_MODEL_URL,
+            FABRIC_MODEL_PATH
+        )
+
+
 DATE_ENCODER_PATH = BASE_DIR / "models" / "date_encoder.pkl"
 QUARTER_ENCODER_PATH = BASE_DIR / "models" / "quarter_encoder.pkl"
 DEPARTMENT_ENCODER_PATH = BASE_DIR / "models" / "department_encoder.pkl"
@@ -1092,6 +1129,7 @@ DAY_ENCODER_PATH = BASE_DIR / "models" / "day_encoder.pkl"
 
 @st.cache_resource
 def load_resources():
+    ensure_large_models()
     for name, path in [
         ("Productivity model", PRODUCTIVITY_MODEL_PATH),
         ("Energy model", ENERGY_MODEL_PATH),
