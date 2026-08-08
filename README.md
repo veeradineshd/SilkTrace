@@ -155,73 +155,73 @@ Provides information about the project, technologies, and system capabilities.
 
 ## 🏠 Home
 
-![SilkTrace Home](screenshots/homepage_1.png.png)
+![SilkTrace Home](screenshots/homepage_1.png)
 
-![SilkTrace Home](screenshots/homepage_2.png.png)
+![SilkTrace Home](screenshots/homepage_2.png)
 
 ---
 
 ## ⚡ Energy Prediction
 
-![Energy Prediction](screenshots/energy_prediction_1.png.png)
+![Energy Prediction](screenshots/energy_prediction_1.png)
 
-![Energy Prediction](screenshots/energy_prediction_2.png.png)
+![Energy Prediction](screenshots/energy_prediction_2.png)
 
-![Energy Prediction](screenshots/energy_prediction_3.png.png)
+![Energy Prediction](screenshots/energy_prediction_3.png)
 
-![Energy Prediction](screenshots/energy_prediction_4.png.png)
+![Energy Prediction](screenshots/energy_prediction_4.png)
 
 ---
 
 ## 👷 Productivity Prediction
 
-![Productivity Prediction](screenshots/productivity_prediction_1.png.png)
+![Productivity Prediction](screenshots/productivity_prediction_1.png)
 
-![Productivity Prediction](screenshots/productivity_prediction_2.png.png)
+![Productivity Prediction](screenshots/productivity_prediction_2.png)
 
-![Productivity Prediction](screenshots/productivity_prediction_3.png.png)
+![Productivity Prediction](screenshots/productivity_prediction_3.png)
 
-![Productivity Prediction](screenshots/productivity_prediction_4.png.png)
+![Productivity Prediction](screenshots/productivity_prediction_4.png)
 
 ---
 
 ## 🧵 Fabric Defect Detection
 
-![Fabric Defect Detection](screenshots/fabric_defect_detection_1.png.png)
+![Fabric Defect Detection](screenshots/fabric_defect_detection_1.png)
 
-![Fabric Defect Detection](screenshots/fabric_defect_detection_2.png.png)
+![Fabric Defect Detection](screenshots/fabric_defect_detection_2.png)
 
-![Fabric Defect Detection](screenshots/fabric_defect_detection_3.png.png)
+![Fabric Defect Detection](screenshots/fabric_defect_detection_3.png)
 
-![Fabric Defect Detection](screenshots/fabric_defect_detection_4.png.png)
+![Fabric Defect Detection](screenshots/fabric_defect_detection_4.png)
 
-![Fabric Defect Detection](screenshots/fabric_defect_detection_5.png.png)
+![Fabric Defect Detection](screenshots/fabric_defect_detection_5.png)
 
-![Fabric Defect Detection](screenshots/fabric_defect_detection_6.png.png)
+![Fabric Defect Detection](screenshots/fabric_defect_detection_6.png)
 
 ---
 
 ## 📊 Analytics
 
-![Analytics Dashboard](screenshots/analytics_page_1.png.png)
+![Analytics Dashboard](screenshots/analytics_page_1.png)
 
-![Analytics Dashboard](screenshots/analytics_page_2.png.png)
+![Analytics Dashboard](screenshots/analytics_page_2.png)
 
-![Analytics Dashboard](screenshots/analytics_page_3.png.png)
+![Analytics Dashboard](screenshots/analytics_page_3.png)
 
-![Analytics Dashboard](screenshots/analytics_page_4.png.png)
+![Analytics Dashboard](screenshots/analytics_page_4.png)
 
-![Analytics Dashboard](screenshots/analytics_page_5.png.png)
+![Analytics Dashboard](screenshots/analytics_page_5.png)
 
-![Analytics Dashboard](screenshots/analytics_page_6.png.png)
+![Analytics Dashboard](screenshots/analytics_page_6.png)
 
 ---
 
 ## 📖 About SilkTrace
 
-![About SilkTrace](screenshots/about_silktrace_1.png.png)
+![About SilkTrace](screenshots/about_silktrace_1.png)
 
-![About SilkTrace](screenshots/about_silktrace_2.png.png)
+![About SilkTrace](screenshots/about_silktrace_2.png)
 
 ---
 
