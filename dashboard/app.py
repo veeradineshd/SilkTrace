@@ -1,17 +1,10 @@
+import importlib
 import streamlit as st
 import joblib
 import time
 import pandas as pd
 from pathlib import Path
 from PIL import Image
-
-try:
-    from tensorflow.keras.models import load_model  # type: ignore[import-not-found]
-except ImportError:
-    def load_model(*args, **kwargs):
-        raise ImportError(
-            "TensorFlow/Keras is required for fabric defect detection but is not available in this environment."
-        )
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
@@ -1903,6 +1896,19 @@ elif page == "Productivity Prediction":
 # ==================== FABRIC DEFECT DETECTION PAGE ====================
 
 elif page == "Fabric Defect Detection":
+    import importlib
+
+    try:
+        load_model = importlib.import_module("tensorflow.keras.models").load_model
+    except ModuleNotFoundError:
+        try:
+            load_model = importlib.import_module("keras.models").load_model
+        except ModuleNotFoundError:
+            load_model = None
+
+    if load_model is None:
+        st.error("TensorFlow/Keras is not installed. Please install the required ML dependencies to use Fabric Defect Detection.")
+        st.stop()
 
     fabric_model = load_model(FABRIC_MODEL_PATH)
     
