@@ -1,4 +1,3 @@
-import importlib
 import streamlit as st
 import joblib
 import time
@@ -1896,6 +1895,7 @@ elif page == "Productivity Prediction":
 # ==================== FABRIC DEFECT DETECTION PAGE ====================
 
 elif page == "Fabric Defect Detection":
+    
     import importlib
 
     try:
