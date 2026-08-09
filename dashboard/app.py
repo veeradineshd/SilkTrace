@@ -1094,8 +1094,8 @@ FABRIC_MODEL_URL = (
 )
 
 
-def ensure_large_models():
-    """Download large ML models from the GitHub Release if they are missing."""
+def ensure_energy_model():
+    """Download energy model from GitHub Release if missing."""
 
     ENERGY_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1105,6 +1105,12 @@ def ensure_large_models():
             ENERGY_MODEL_URL,
             ENERGY_MODEL_PATH
         )
+
+
+def ensure_fabric_model():
+    """Download fabric defect model from GitHub Release if missing."""
+
+    FABRIC_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     if not FABRIC_MODEL_PATH.exists():
         st.info("⬇️ Downloading Fabric Defect Detection model...")
@@ -1119,13 +1125,13 @@ QUARTER_ENCODER_PATH = BASE_DIR / "models" / "quarter_encoder.pkl"
 DEPARTMENT_ENCODER_PATH = BASE_DIR / "models" / "department_encoder.pkl"
 DAY_ENCODER_PATH = BASE_DIR / "models" / "day_encoder.pkl"
 
+
 @st.cache_resource
 def load_resources():
-    ensure_large_models()
+    ensure_energy_model()
     for name, path in [
         ("Productivity model", PRODUCTIVITY_MODEL_PATH),
         ("Energy model", ENERGY_MODEL_PATH),
-        ("Fabric defect model", FABRIC_MODEL_PATH),
         ("Date encoder", DATE_ENCODER_PATH),
         ("Quarter encoder", QUARTER_ENCODER_PATH),
         ("Department encoder", DEPARTMENT_ENCODER_PATH),
@@ -1136,7 +1142,6 @@ def load_resources():
 
     productivity_model = joblib.load(PRODUCTIVITY_MODEL_PATH)
     energy_model = joblib.load(ENERGY_MODEL_PATH)
-    fabric_model = None
 
     date_encoder = joblib.load(DATE_ENCODER_PATH)
     quarter_encoder = joblib.load(QUARTER_ENCODER_PATH)
@@ -1146,22 +1151,39 @@ def load_resources():
     return (
         productivity_model,
         energy_model,
-        fabric_model,
         date_encoder,
         quarter_encoder,
         department_encoder,
         day_encoder
     )
 
+
 (
     productivity_model,
     energy_model,
-    fabric_model,
     date_encoder,
     quarter_encoder,
     department_encoder,
     day_encoder,
 ) = load_resources()
+
+
+@st.cache_resource
+def load_fabric_model():
+    ensure_fabric_model()
+    if not FABRIC_MODEL_PATH.exists():
+        raise FileNotFoundError(f"Fabric defect model file not found at: {FABRIC_MODEL_PATH}")
+
+    try:
+        from tensorflow.keras.models import load_model
+    except ImportError:
+        try:
+            from keras.models import load_model
+        except ImportError:
+            raise RuntimeError("TensorFlow/Keras is not installed. Please install required ML dependencies.")
+
+    return load_model(FABRIC_MODEL_PATH, compile=False)
+
 
 # ---------------- Load Datasets ----------------
 
@@ -1895,22 +1917,13 @@ elif page == "Productivity Prediction":
 # ==================== FABRIC DEFECT DETECTION PAGE ====================
 
 elif page == "Fabric Defect Detection":
-    
-    import importlib
 
     try:
-        load_model = importlib.import_module("tensorflow.keras.models").load_model
-    except ModuleNotFoundError:
-        try:
-            load_model = importlib.import_module("keras.models").load_model
-        except ModuleNotFoundError:
-            load_model = None
-
-    if load_model is None:
-        st.error("TensorFlow/Keras is not installed. Please install the required ML dependencies to use Fabric Defect Detection.")
+        fabric_model = load_fabric_model()
+    except Exception as e:
+        st.error(f"⚠️ Unable to load Fabric Defect Detection model: {str(e)}")
+        st.info("Please ensure TensorFlow/Keras and required model files are available.")
         st.stop()
-
-    fabric_model = load_model(FABRIC_MODEL_PATH)
     
     render_page_header(
         "Fabric Defect Detection",
@@ -1992,7 +2005,7 @@ elif page == "Fabric Defect Detection":
         # Predict
         start_time = time.time()
         with st.spinner("🤖 AI is analyzing the fabric image..."):
-            prediction = fabric_model.predict(img)
+            prediction = fabric_model.predict(img, verbose=0)
         elapsed = time.time() - start_time
 
         class_names = [

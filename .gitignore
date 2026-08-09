@@ -47,3 +47,6 @@ Thumbs.db
 # Jupyter
 
 .ipynb_checkpoints/
+
+# Temporary scratch directory
+scratch/
