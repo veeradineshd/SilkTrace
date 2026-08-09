@@ -1144,7 +1144,7 @@ def load_resources():
 
     productivity_model = joblib.load(PRODUCTIVITY_MODEL_PATH)
     energy_model = joblib.load(ENERGY_MODEL_PATH)
-    fabric_model = load_model(FABRIC_MODEL_PATH)
+    fabric_model = None
 
     date_encoder = joblib.load(DATE_ENCODER_PATH)
     quarter_encoder = joblib.load(QUARTER_ENCODER_PATH)
@@ -1904,6 +1904,8 @@ elif page == "Productivity Prediction":
 
 elif page == "Fabric Defect Detection":
 
+    fabric_model = load_model(FABRIC_MODEL_PATH)
+    
     render_page_header(
         "Fabric Defect Detection",
         "AI-Powered Deep Learning for Automated Quality Inspection",
