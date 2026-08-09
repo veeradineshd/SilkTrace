@@ -1,3 +1,9 @@
+import os
+import gc
+import json
+import urllib.parse
+import urllib.request
+import requests
 import streamlit as st
 import joblib
 import time
@@ -24,6 +30,89 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ==================== GOOGLE OAUTH CONFIGURATION ====================
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID") or (st.secrets.get("GOOGLE_CLIENT_ID", "") if hasattr(st, "secrets") else "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET") or (st.secrets.get("GOOGLE_CLIENT_SECRET", "") if hasattr(st, "secrets") else "")
+GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI") or (st.secrets.get("GOOGLE_REDIRECT_URI", "https://silktrace.onrender.com") if hasattr(st, "secrets") else "https://silktrace.onrender.com")
+
+def get_google_auth_url():
+    base_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "online",
+        "prompt": "select_account"
+    }
+    return f"{base_url}?{urllib.parse.urlencode(params)}"
+
+def exchange_code_for_user_info(code):
+    token_url = "https://oauth2.googleapis.com/token"
+    payload = {
+        "code": code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "grant_type": "authorization_code"
+    }
+    res = requests.post(token_url, data=payload, timeout=10)
+    if res.status_code != 200:
+        raise RuntimeError(f"Token exchange failed ({res.status_code}): {res.text}")
+    tokens = res.json()
+    access_token = tokens.get("access_token")
+    
+    userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    user_res = requests.get(userinfo_url, headers=headers, timeout=10)
+    if user_res.status_code != 200:
+        raise RuntimeError(f"Failed to fetch user info ({user_res.status_code}): {user_res.text}")
+    return user_res.json()
+
+def render_login_screen():
+    inject_custom_css()
+    st.markdown("""
+    <div style="max-width: 580px; margin: 40px auto; padding: 40px; background: rgba(15, 23, 42, 0.95); border-radius: 24px; border: 1px solid rgba(96, 165, 250, 0.3); box-shadow: 0 25px 60px rgba(0,0,0,0.6); text-align: center;">
+        <div style="font-size: 64px; margin-bottom: 8px;">🧵</div>
+        <h1 style="color: #ffffff; font-size: 2.5rem; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.5px;">SilkTrace</h1>
+        <p style="color: #60a5fa; font-size: 1.1rem; font-weight: 500; margin-bottom: 24px;">AI-Powered Textile Manufacturing Intelligence</p>
+        
+        <div style="background: rgba(30, 41, 59, 0.7); padding: 20px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 28px; text-align: left;">
+            <p style="color: #f8fafc; font-weight: 600; margin-bottom: 10px; font-size: 0.95rem;">🔒 Authenticated Dashboard Access</p>
+            <p style="color: #94a3b8; font-size: 0.88rem; margin: 4px 0;">• Real-Time Energy Consumption Forecasting</p>
+            <p style="color: #94a3b8; font-size: 0.88rem; margin: 4px 0;">• Garment Worker Productivity Predictions</p>
+            <p style="color: #94a3b8; font-size: 0.88rem; margin: 4px 0;">• MobileNetV2 Fabric Defect Quality Control</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+        auth_url = get_google_auth_url()
+        st.markdown(f"""
+        <div style="margin-top: 15px; margin-bottom: 10px;">
+            <a href="{auth_url}" target="_self" style="display: inline-flex; align-items: center; justify-content: center; background-color: #ffffff; color: #0f172a; text-decoration: none; padding: 14px 32px; border-radius: 12px; font-weight: 700; font-size: 1.05rem; box-shadow: 0 8px 25px rgba(255, 255, 255, 0.15); transition: all 0.2s ease;">
+                <svg style="width: 20px; height: 20px; margin-right: 12px;" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.62z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                </svg>
+                Continue with Google
+            </a>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.info("💡 **Google OAuth Configuration**: Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in environment variables or Render dashboard for live Google Sign-In.")
+        if st.button("🔐 Continue with Demo Access (Development Mode)", use_container_width=True):
+            st.session_state["authenticated"] = True
+            st.session_state["user_info"] = {
+                "name": "SilkTrace Admin",
+                "email": "admin@silktrace.ai",
+                "picture": ""
+            }
+            st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ==================== CUSTOM STYLING ====================
 def inject_custom_css():
@@ -1211,13 +1300,57 @@ def load_datasets():
 
 productivity_data, energy_data = load_datasets()
 
+# ==================== OAUTH AUTHENTICATION GATE ====================
+if "code" in st.query_params and not st.session_state.get("authenticated"):
+    auth_code = st.query_params["code"]
+    try:
+        if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+            user_info = exchange_code_for_user_info(auth_code)
+            st.session_state["authenticated"] = True
+            st.session_state["user_info"] = user_info
+            st.query_params.clear()
+            st.rerun()
+        else:
+            st.warning("Google OAuth client ID/secret not configured.")
+    except Exception as e:
+        st.error(f"OAuth authentication error: {str(e)}")
+        st.query_params.clear()
+
+if not st.session_state.get("authenticated"):
+    render_login_screen()
+    st.stop()
+
+# Inject CSS for authenticated view
+inject_custom_css()
+
 # ==================== SIDEBAR NAVIGATION ====================
- 
+
 # SilkTrace Logo
 if LOGO_PATH.exists():
     st.sidebar.image(str(LOGO_PATH), width=180)
 elif (Path(__file__).resolve().parent / "silktrace_logo.png.png").exists():
     st.sidebar.image(str(Path(__file__).resolve().parent / "silktrace_logo.png.png"), width=180)
+
+# User Account Info
+user_info = st.session_state.get("user_info", {})
+user_name = user_info.get("name", "SilkTrace User")
+user_email = user_info.get("email", "")
+user_pic = user_info.get("picture", "")
+
+with st.sidebar:
+    st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
+    if user_pic:
+        st.image(user_pic, width=50)
+    st.markdown(f"**{user_name}**")
+    if user_email:
+        st.caption(user_email)
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state["authenticated"] = False
+        st.session_state.pop("user_info", None)
+        st.query_params.clear()
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("---")
 
 # SilkTrace Branding
 st.sidebar.markdown("""
@@ -1573,6 +1706,12 @@ if page == "Home":
 # ==================== ENERGY PREDICTION PAGE ====================
  
 elif page == "Energy Prediction":
+
+    try:
+        energy_model = load_energy_model()
+    except Exception as e:
+        st.error(f"⚠️ Unable to load Energy Prediction model: {str(e)}")
+        st.stop()
  
     render_page_header(
         "Energy Consumption Prediction",
@@ -1744,6 +1883,12 @@ elif page == "Energy Prediction":
 # ==================== PRODUCTIVITY PREDICTION PAGE ====================
  
 elif page == "Productivity Prediction":
+
+    try:
+        productivity_model = load_productivity_model()
+    except Exception as e:
+        st.error(f"⚠️ Unable to load Productivity Prediction model: {str(e)}")
+        st.stop()
     
     render_page_header(
         "Worker Productivity Prediction",

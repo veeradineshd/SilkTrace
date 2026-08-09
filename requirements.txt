@@ -8,3 +8,4 @@ tensorflow==2.21.0
 pillow==12.3.0
 plotly==6.9.0
 reportlab==5.0.0
+requests==2.34.2

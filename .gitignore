@@ -36,8 +36,10 @@ test.pdf
 tempCodeRunnerFile.ipynb
 
 # Streamlit
-
-.streamlit/
+.streamlit/secrets.toml
+.env
+.env.*
+*.secrets.json
 
 # OS
 
