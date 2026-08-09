@@ -1125,51 +1125,57 @@ QUARTER_ENCODER_PATH = BASE_DIR / "models" / "quarter_encoder.pkl"
 DEPARTMENT_ENCODER_PATH = BASE_DIR / "models" / "department_encoder.pkl"
 DAY_ENCODER_PATH = BASE_DIR / "models" / "day_encoder.pkl"
 
+PRODUCTIVITY_ENCODER_PATH = BASE_DIR / "models" / "productivity_encoder.pkl"
+
 
 @st.cache_resource
-def load_resources():
-    ensure_energy_model()
+def load_encoders():
+    """Load only lightweight encoders at startup (< 5 KB each, negligible RAM)."""
     for name, path in [
-        ("Productivity model", PRODUCTIVITY_MODEL_PATH),
-        ("Energy model", ENERGY_MODEL_PATH),
         ("Date encoder", DATE_ENCODER_PATH),
         ("Quarter encoder", QUARTER_ENCODER_PATH),
         ("Department encoder", DEPARTMENT_ENCODER_PATH),
         ("Day encoder", DAY_ENCODER_PATH),
     ]:
         if not path.exists():
-            raise FileNotFoundError(f"Required model/encoder resource file not found: {path} ({name})")
-
-    productivity_model = joblib.load(PRODUCTIVITY_MODEL_PATH)
-    energy_model = joblib.load(ENERGY_MODEL_PATH)
+            raise FileNotFoundError(f"Required encoder file not found: {path} ({name})")
 
     date_encoder = joblib.load(DATE_ENCODER_PATH)
     quarter_encoder = joblib.load(QUARTER_ENCODER_PATH)
     department_encoder = joblib.load(DEPARTMENT_ENCODER_PATH)
     day_encoder = joblib.load(DAY_ENCODER_PATH)
 
-    return (
-        productivity_model,
-        energy_model,
-        date_encoder,
-        quarter_encoder,
-        department_encoder,
-        day_encoder
-    )
+    return date_encoder, quarter_encoder, department_encoder, day_encoder
 
 
 (
-    productivity_model,
-    energy_model,
     date_encoder,
     quarter_encoder,
     department_encoder,
     day_encoder,
-) = load_resources()
+) = load_encoders()
+
+
+@st.cache_resource
+def load_energy_model():
+    """Lazy-load energy model on demand (262 MB RAM). Only called when Energy Prediction page is opened."""
+    ensure_energy_model()
+    if not ENERGY_MODEL_PATH.exists():
+        raise FileNotFoundError(f"Energy model file not found at: {ENERGY_MODEL_PATH}")
+    return joblib.load(ENERGY_MODEL_PATH)
+
+
+@st.cache_resource
+def load_productivity_model():
+    """Lazy-load productivity model on demand (132 MB RAM). Only called when Productivity Prediction page is opened."""
+    if not PRODUCTIVITY_MODEL_PATH.exists():
+        raise FileNotFoundError(f"Productivity model file not found at: {PRODUCTIVITY_MODEL_PATH}")
+    return joblib.load(PRODUCTIVITY_MODEL_PATH)
 
 
 @st.cache_resource
 def load_fabric_model():
+    """Lazy-load TensorFlow + fabric defect model on demand (~420 MB RAM). Only called when Fabric Defect Detection page is opened."""
     ensure_fabric_model()
     if not FABRIC_MODEL_PATH.exists():
         raise FileNotFoundError(f"Fabric defect model file not found at: {FABRIC_MODEL_PATH}")
@@ -1662,7 +1668,13 @@ elif page == "Energy Prediction":
     st.markdown("---")
 
     if st.button("🚀 Predict Energy Usage", use_container_width=True):
- 
+
+        try:
+            energy_model = load_energy_model()
+        except Exception as e:
+            st.error(f"⚠️ Unable to load Energy model: {str(e)}")
+            st.stop()
+
         input_df = pd.DataFrame([{
             "date": date,
             "Lagging_Current_Reactive.Power_kVarh": lagging_reactive,
@@ -1675,7 +1687,7 @@ elif page == "Energy Prediction":
             "Day_of_week": day,
             "Load_Type": load
         }])
- 
+
         start_time = time.time()
         with st.spinner("🤖 AI is predicting energy consumption..."):
             prediction = energy_model.predict(input_df)
@@ -1826,6 +1838,12 @@ elif page == "Productivity Prediction":
     st.markdown("---")
 
     if st.button("🚀 Predict Productivity", use_container_width=True):
+
+        try:
+            productivity_model = load_productivity_model()
+        except Exception as e:
+            st.error(f"⚠️ Unable to load Productivity model: {str(e)}")
+            st.stop()
 
         input_data = pd.DataFrame([{
 
