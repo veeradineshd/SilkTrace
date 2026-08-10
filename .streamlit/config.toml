@@ -1,7 +1,7 @@
 [server]
 headless = true
 address = "0.0.0.0"
-enableCORS = false
+enableCORS = true
 enableXsrfProtection = true
 
 [theme]

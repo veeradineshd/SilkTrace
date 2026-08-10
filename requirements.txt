@@ -1,11 +1,25 @@
-streamlit==1.40.0
+# SilkTrace — Render-compatible requirements
+# Python 3.12 required (see .python-version)
+
+# ── Web framework ──────────────────────────────
+streamlit==1.40.2
 streamlit-option-menu==0.3.13
+
+# ── Data ──────────────────────────────────────
 pandas==2.2.3
 numpy==1.26.4
 scikit-learn==1.5.2
 joblib==1.4.2
+
+# ── Deep learning (CPU build for Render free tier) ──
 tensorflow-cpu==2.17.0
-pillow==10.4.0
-plotly==5.24.1
+
+# ── Image / PDF ───────────────────────────────
+Pillow==10.4.0
 reportlab==4.2.5
+
+# ── Visualisation ──────────────────────────────
+plotly==5.24.1
+
+# ── HTTP / OAuth ───────────────────────────────
 requests==2.32.3

@@ -1,54 +1,52 @@
 # Python
-
 __pycache__/
 *.py[cod]
 *.pyo
 
-# Virtual environment
-
+# Virtual environments
 .venv/
 .venv312/
 venv/
 env/
 
-# Large datasets
-
+# Large datasets (not committed — too large for GitHub)
 datasets/fabric_defect/
 
-# Large trained models
-
+# Large trained models (downloaded at runtime via GitHub Releases)
 models/energy_model.pkl
 models/fabric_defect_model.keras
 
-# Generated/history files
-
+# Generated/history files (runtime-generated, not source code)
 history/
 reports/
 inspection_history.csv
 inspection_report.pdf
 test.pdf
 
-# Temporary files
+# Secrets — NEVER commit these
+.streamlit/secrets.toml
+.env
+.env.*
+*.secrets.json
+*.key
+*.pem
+credentials.json
 
+# Temporary files
 *.bak
 *.tmp
 *~
 tempCodeRunnerFile.ipynb
 
-# Streamlit
-.streamlit/secrets.toml
-.env
-.env.*
-*.secrets.json
-
-# OS
-
+# OS metadata
 .DS_Store
 Thumbs.db
 
 # Jupyter
-
 .ipynb_checkpoints/
 
-# Temporary scratch directory
-scratch/
+# Scratch / dev-only scripts
+scratch/
+
+# VS Code workspace settings (local-only)
+.vscode/

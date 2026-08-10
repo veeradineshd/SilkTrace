@@ -1,6 +1,4 @@
 import os
-import gc
-import json
 import urllib.parse
 import urllib.request
 import requests
@@ -12,7 +10,6 @@ from pathlib import Path
 from PIL import Image
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
 from reportlab.platypus import (
     SimpleDocTemplate,
@@ -24,6 +21,27 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from streamlit_option_menu import option_menu
 
+# ==================== PROJECT PATHS ====================
+# All paths derived from this file — works on both Windows and Render Linux
+BASE_DIR = Path(__file__).resolve().parent.parent
+LOGO_PATH = Path(__file__).resolve().parent / "silktrace_logo.png"
+
+PRODUCTIVITY_MODEL_PATH = BASE_DIR / "models" / "productivity_model.pkl"
+ENERGY_MODEL_PATH = BASE_DIR / "models" / "energy_model.pkl"
+FABRIC_MODEL_PATH = BASE_DIR / "models" / "fabric_defect_model.keras"
+
+DATE_ENCODER_PATH = BASE_DIR / "models" / "date_encoder.pkl"
+QUARTER_ENCODER_PATH = BASE_DIR / "models" / "quarter_encoder.pkl"
+DEPARTMENT_ENCODER_PATH = BASE_DIR / "models" / "department_encoder.pkl"
+DAY_ENCODER_PATH = BASE_DIR / "models" / "day_encoder.pkl"
+PRODUCTIVITY_ENCODER_PATH = BASE_DIR / "models" / "productivity_encoder.pkl"
+
+REPORTS_DIR = BASE_DIR / "reports"
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+HISTORY_DIR = BASE_DIR / "history"
+HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+
 st.set_page_config(
     page_title="SilkTrace",
     page_icon="🧵",
@@ -32,9 +50,15 @@ st.set_page_config(
 )
 
 # ==================== GOOGLE OAUTH CONFIGURATION ====================
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID") or (st.secrets.get("GOOGLE_CLIENT_ID", "") if hasattr(st, "secrets") else "")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET") or (st.secrets.get("GOOGLE_CLIENT_SECRET", "") if hasattr(st, "secrets") else "")
-GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI") or (st.secrets.get("GOOGLE_REDIRECT_URI", "https://silktrace.onrender.com") if hasattr(st, "secrets") else "https://silktrace.onrender.com")
+def _get_st_secret(key, default=""):
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID") or _get_st_secret("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET") or _get_st_secret("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI") or _get_st_secret("GOOGLE_REDIRECT_URI", "https://silktrace.onrender.com")
 
 def get_google_auth_url():
     base_url = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -1058,7 +1082,7 @@ def render_timing_badge(elapsed_seconds):
     """, unsafe_allow_html=True)
 
 def create_pdf_report(summary_df, predicted_class, confidence, inspection_time):
-    pdf_file = str(BASE_DIR / "inspection_report.pdf")
+    pdf_file = str(REPORTS_DIR / "inspection_report.pdf")
 
     doc = SimpleDocTemplate(pdf_file)
     styles = getSampleStyleSheet()
@@ -1157,20 +1181,10 @@ def create_pdf_report(summary_df, predicted_class, confidence, inspection_time):
     return pdf_file
 
 # ---------------- Load Models & Datasets ----------------
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-LOGO_PATH = Path(__file__).resolve().parent / "silktrace_logo.png"
-
-PRODUCTIVITY_MODEL_PATH = BASE_DIR / "models" / "productivity_model.pkl"
-ENERGY_MODEL_PATH = BASE_DIR / "models" / "energy_model.pkl"
-FABRIC_MODEL_PATH = BASE_DIR / "models" / "fabric_defect_model.keras"
+# (BASE_DIR and all model paths already defined at top of file)
 
 
 # ==================== DOWNLOAD LARGE MODELS IF MISSING ====================
-
-import urllib.request
-
 
 ENERGY_MODEL_URL = (
     "https://github.com/veeradineshd/SilkTrace/releases/download/"
@@ -1215,12 +1229,7 @@ def ensure_fabric_model():
             raise RuntimeError(f"Failed to download Fabric Defect model: {str(e)}")
 
 
-DATE_ENCODER_PATH = BASE_DIR / "models" / "date_encoder.pkl"
-QUARTER_ENCODER_PATH = BASE_DIR / "models" / "quarter_encoder.pkl"
-DEPARTMENT_ENCODER_PATH = BASE_DIR / "models" / "department_encoder.pkl"
-DAY_ENCODER_PATH = BASE_DIR / "models" / "day_encoder.pkl"
-
-PRODUCTIVITY_ENCODER_PATH = BASE_DIR / "models" / "productivity_encoder.pkl"
+# (Encoder paths already defined at top of file)
 
 
 @st.cache_resource
@@ -1485,8 +1494,6 @@ if page == "Home":
         </div>
     </div>
     """, unsafe_allow_html=True)
-
-    from datetime import datetime
 
     st.caption(f"🕒 Dashboard Loaded : {datetime.now().strftime('%d %B %Y  |  %I:%M %p')}")
     
@@ -1851,7 +1858,6 @@ elif page == "Energy Prediction":
         st.success("✅ Prediction Completed Successfully!")
         render_timing_badge(elapsed)
         st.balloons()
-        from pathlib import Path
 
         history_file = BASE_DIR / "history" / "energy_history.csv"
         history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -2206,11 +2212,11 @@ elif page == "Fabric Defect Detection":
         
         with col1:
             if confidence >= 90:
-                st.success(f"✅ High Confidence Detection")
+                st.success("✅ High Confidence Detection")
             elif confidence >= 70:
-                st.info(f"ℹ️ Moderate Confidence Detection")
+                st.info("ℹ️ Moderate Confidence Detection")
             else:
-                st.warning(f"⚠️ Low Confidence - Manual Review Recommended")
+                st.warning("⚠️ Low Confidence - Manual Review Recommended")
 
         with col2:
             st.metric("Detected Defect", predicted_class)
