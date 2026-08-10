@@ -1237,12 +1237,9 @@ def load_encoders():
     return date_encoder, quarter_encoder, department_encoder, day_encoder
 
 
-(
-    date_encoder,
-    quarter_encoder,
-    department_encoder,
-    day_encoder,
-) = load_encoders()
+# NOTE: load_encoders() is called AFTER the authentication gate below
+# to avoid loading data before login. The @st.cache_resource decorator
+# ensures it only runs once.
 
 
 @st.cache_resource
@@ -1298,7 +1295,7 @@ def load_datasets():
     return productivity_data, energy_data
 
 
-productivity_data, energy_data = load_datasets()
+# NOTE: load_datasets() is called AFTER the authentication gate below.
 
 # ==================== OAUTH AUTHENTICATION GATE ====================
 if "code" in st.query_params and not st.session_state.get("authenticated"):
@@ -1319,6 +1316,19 @@ if "code" in st.query_params and not st.session_state.get("authenticated"):
 if not st.session_state.get("authenticated"):
     render_login_screen()
     st.stop()
+
+# ==================== POST-AUTH RESOURCE LOADING ====================
+# These are loaded ONCE after successful authentication.
+# @st.cache_resource / @st.cache_data ensures they only run once per session.
+
+(
+    date_encoder,
+    quarter_encoder,
+    department_encoder,
+    day_encoder,
+) = load_encoders()
+
+productivity_data, energy_data = load_datasets()
 
 # Inject CSS for authenticated view
 inject_custom_css()
