@@ -27,12 +27,16 @@ def get_energy_model():
 
 def predict_productivity(data):
     model = get_productivity_model()
-    df = pd.DataFrame([data])
+    df = pd.DataFrame([data]) if isinstance(data, dict) else data
     prediction = model.predict(df)
     return prediction[0]
 
 def predict_energy(data):
     model = get_energy_model()
-    df = pd.DataFrame([data])
+    df = pd.DataFrame([data]) if isinstance(data, dict) else data
     prediction = model.predict(df)
     return prediction[0]
+
+def load_resources():
+    """Load and return productivity and energy models."""
+    return get_productivity_model(), get_energy_model()

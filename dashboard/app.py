@@ -8,8 +8,8 @@ import time
 import pandas as pd
 from pathlib import Path
 from PIL import Image
-import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime
 from reportlab.platypus import (
     SimpleDocTemplate,
@@ -113,7 +113,7 @@ def render_login_screen():
     if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
         auth_url = get_google_auth_url()
         st.markdown(f"""
-        <div style="margin-top: 15px; margin-bottom: 10px;">
+        <div style="margin-top: 15px; margin-bottom: 15px;">
             <a href="{auth_url}" target="_self" style="display: inline-flex; align-items: center; justify-content: center; background-color: #ffffff; color: #0f172a; text-decoration: none; padding: 14px 32px; border-radius: 12px; font-weight: 700; font-size: 1.05rem; box-shadow: 0 8px 25px rgba(255, 255, 255, 0.15); transition: all 0.2s ease;">
                 <svg style="width: 20px; height: 20px; margin-right: 12px;" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -127,14 +127,15 @@ def render_login_screen():
         """, unsafe_allow_html=True)
     else:
         st.info("💡 **Google OAuth Configuration**: Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in environment variables or Render dashboard for live Google Sign-In.")
-        if st.button("🔐 Continue with Demo Access (Development Mode)", use_container_width=True):
-            st.session_state["authenticated"] = True
-            st.session_state["user_info"] = {
-                "name": "SilkTrace Admin",
-                "email": "admin@silktrace.ai",
-                "picture": ""
-            }
-            st.rerun()
+
+    if st.button("🔐 Continue with Demo Access", use_container_width=True):
+        st.session_state["authenticated"] = True
+        st.session_state["user_info"] = {
+            "name": "SilkTrace Admin",
+            "email": "admin@silktrace.ai",
+            "picture": ""
+        }
+        st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1197,16 +1198,22 @@ FABRIC_MODEL_URL = (
 )
 
 
+def _download_file(url, destination_path):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    res = requests.get(url, headers=headers, stream=True, timeout=120)
+    res.raise_for_status()
+    with open(destination_path, "wb") as f:
+        for chunk in res.iter_content(chunk_size=65536):
+            if chunk:
+                f.write(chunk)
+
 def ensure_energy_model():
     """Download energy model from GitHub Release if missing or incomplete."""
     ENERGY_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not ENERGY_MODEL_PATH.exists() or ENERGY_MODEL_PATH.stat().st_size == 0:
         st.info("⬇️ Downloading Energy Prediction model from GitHub Releases (~193 MB)...")
         try:
-            urllib.request.urlretrieve(
-                ENERGY_MODEL_URL,
-                ENERGY_MODEL_PATH
-            )
+            _download_file(ENERGY_MODEL_URL, ENERGY_MODEL_PATH)
         except Exception as e:
             if ENERGY_MODEL_PATH.exists():
                 ENERGY_MODEL_PATH.unlink()
@@ -1219,10 +1226,7 @@ def ensure_fabric_model():
     if not FABRIC_MODEL_PATH.exists() or FABRIC_MODEL_PATH.stat().st_size == 0:
         st.info("⬇️ Downloading Fabric Defect Detection model from GitHub Releases (~47 MB)...")
         try:
-            urllib.request.urlretrieve(
-                FABRIC_MODEL_URL,
-                FABRIC_MODEL_PATH
-            )
+            _download_file(FABRIC_MODEL_URL, FABRIC_MODEL_PATH)
         except Exception as e:
             if FABRIC_MODEL_PATH.exists():
                 FABRIC_MODEL_PATH.unlink()
@@ -1252,11 +1256,6 @@ def load_encoders():
     return date_encoder, quarter_encoder, department_encoder, day_encoder
 
 
-# NOTE: load_encoders() is called AFTER the authentication gate below
-# to avoid loading data before login. The @st.cache_resource decorator
-# ensures it only runs once.
-
-
 @st.cache_resource
 def load_energy_model():
     """Lazy-load energy model on demand (262 MB RAM). Only called when Energy Prediction page is opened."""
@@ -1282,14 +1281,35 @@ def load_fabric_model():
         raise FileNotFoundError(f"Fabric defect model file not found at: {FABRIC_MODEL_PATH}")
 
     try:
-        from tensorflow.keras.models import load_model
+        from tensorflow.keras.models import load_model  # type: ignore[import-not-found]
     except ImportError:
         try:
-            from keras.models import load_model
+            from keras.models import load_model  # type: ignore[import-not-found]
         except ImportError:
             raise RuntimeError("TensorFlow/Keras is not installed. Please install required ML dependencies.")
 
     return load_model(FABRIC_MODEL_PATH, compile=False)
+
+
+def load_resources():
+    """Load lightweight encoders and models."""
+    encoders = load_encoders()
+    prod_model = load_productivity_model()
+    return encoders, prod_model
+
+
+def predict_productivity(data):
+    """Predict worker productivity using loaded model."""
+    model = load_productivity_model()
+    df = pd.DataFrame([data]) if isinstance(data, dict) else data
+    return model.predict(df)[0]
+
+
+def predict_energy(data):
+    """Predict energy consumption using loaded model."""
+    model = load_energy_model()
+    df = pd.DataFrame([data]) if isinstance(data, dict) else data
+    return model.predict(df)[0]
 
 
 # ---------------- Load Datasets ----------------
