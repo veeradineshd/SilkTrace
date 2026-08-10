@@ -1184,29 +1184,35 @@ FABRIC_MODEL_URL = (
 
 
 def ensure_energy_model():
-    """Download energy model from GitHub Release if missing."""
-
+    """Download energy model from GitHub Release if missing or incomplete."""
     ENERGY_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    if not ENERGY_MODEL_PATH.exists():
-        st.info("⬇️ Downloading Energy Prediction model...")
-        urllib.request.urlretrieve(
-            ENERGY_MODEL_URL,
-            ENERGY_MODEL_PATH
-        )
+    if not ENERGY_MODEL_PATH.exists() or ENERGY_MODEL_PATH.stat().st_size == 0:
+        st.info("⬇️ Downloading Energy Prediction model from GitHub Releases (~193 MB)...")
+        try:
+            urllib.request.urlretrieve(
+                ENERGY_MODEL_URL,
+                ENERGY_MODEL_PATH
+            )
+        except Exception as e:
+            if ENERGY_MODEL_PATH.exists():
+                ENERGY_MODEL_PATH.unlink()
+            raise RuntimeError(f"Failed to download Energy model: {str(e)}")
 
 
 def ensure_fabric_model():
-    """Download fabric defect model from GitHub Release if missing."""
-
+    """Download fabric defect model from GitHub Release if missing or incomplete."""
     FABRIC_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    if not FABRIC_MODEL_PATH.exists():
-        st.info("⬇️ Downloading Fabric Defect Detection model...")
-        urllib.request.urlretrieve(
-            FABRIC_MODEL_URL,
-            FABRIC_MODEL_PATH
-        )
+    if not FABRIC_MODEL_PATH.exists() or FABRIC_MODEL_PATH.stat().st_size == 0:
+        st.info("⬇️ Downloading Fabric Defect Detection model from GitHub Releases (~47 MB)...")
+        try:
+            urllib.request.urlretrieve(
+                FABRIC_MODEL_URL,
+                FABRIC_MODEL_PATH
+            )
+        except Exception as e:
+            if FABRIC_MODEL_PATH.exists():
+                FABRIC_MODEL_PATH.unlink()
+            raise RuntimeError(f"Failed to download Fabric Defect model: {str(e)}")
 
 
 DATE_ENCODER_PATH = BASE_DIR / "models" / "date_encoder.pkl"
