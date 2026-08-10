@@ -1,0 +1,9 @@
+{
+  "pythonPath": "C:\\Users\\Veera Dinesh D\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+  "venvPath": "C:\\Users\\Veera Dinesh D\\AppData\\Local\\Python\\pythoncore-3.14-64",
+  "extraPaths": [
+    "C:\\Users\\Veera Dinesh D\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages"
+  ],
+  "reportMissingImports": false,
+  "pythonVersion": "3.14"
+}
