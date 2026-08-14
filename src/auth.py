@@ -18,7 +18,7 @@ def _get_secret_or_env(key: str, default: str = "") -> str:
     if val:
         return val.strip()
     try:
-        if key in st.secrets:
+        if hasattr(st, "secrets") and key in st.secrets:
             return str(st.secrets[key]).strip()
     except Exception:
         pass
@@ -155,7 +155,10 @@ def render_login_screen():
         if hasattr(st, "login"):
             try:
                 if st.button("🔑 Continue with Google (Streamlit Auth)", use_container_width=True):
-                    st.login("google")
+                    try:
+                        st.login("google")
+                    except Exception as login_err:
+                        st.error(f"Google OIDC requires client credentials in Render environment variables or .streamlit/secrets.toml ({login_err}). Please use 'Continue with Demo Access' below.")
             except Exception:
                 pass
 
