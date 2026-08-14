@@ -23,7 +23,11 @@ inspection_history.csv
 inspection_report.pdf
 test.pdf
 
-# Secrets — Real production secrets
+# Secrets — Real production & local secrets
+.streamlit/secrets.toml
+dashboard/.streamlit/secrets.toml
+*/.streamlit/secrets.toml
+secrets.toml
 .env
 .env.*
 *.secrets.json

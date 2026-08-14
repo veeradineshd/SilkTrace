@@ -26,14 +26,14 @@ def load_analytics_datasets():
 
 def compute_executive_kpis(prod_df: pd.DataFrame, eng_df: pd.DataFrame, energy_history: pd.DataFrame, prod_history: pd.DataFrame, inspection_history: pd.DataFrame):
     """Calculate key industrial KPI metrics across datasets and runtime histories."""
-    avg_actual_prod = float(prod_df["actual_productivity"].mean()) if "actual_productivity" in prod_df.columns else 0.72
-    avg_targeted_prod = float(prod_df["targeted_productivity"].mean()) if "targeted_productivity" in prod_df.columns else 0.73
+    avg_actual_prod = prod_df["actual_productivity"].mean() if "actual_productivity" in prod_df.columns else 0.72
+    avg_targeted_prod = prod_df["targeted_productivity"].mean() if "targeted_productivity" in prod_df.columns else 0.73
     
-    avg_energy_kwh = float(eng_df["Usage_kWh"].mean()) if "Usage_kWh" in eng_df.columns else 27.38
-    total_energy_kwh = float(eng_df["Usage_kWh"].sum()) if "Usage_kWh" in eng_df.columns else 0.0
+    avg_energy_kwh = eng_df["Usage_kWh"].mean() if "Usage_kWh" in eng_df.columns else 27.38
+    total_energy_kwh = eng_df["Usage_kWh"].sum() if "Usage_kWh" in eng_df.columns else 0.0
 
     defect_count = len(inspection_history) if not inspection_history.empty else 0
-    defect_rate = float((inspection_history["Detected Defect"] != "Normal").mean() * 100) if defect_count > 0 and "Detected Defect" in inspection_history.columns else 0.0
+    defect_rate = ((inspection_history["Detected Defect"] != "Normal").mean() * 100) if defect_count > 0 and "Detected Defect" in inspection_history.columns else 0.0
 
     total_predictions = len(energy_history) + len(prod_history) + defect_count
 

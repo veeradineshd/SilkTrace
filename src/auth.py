@@ -12,24 +12,71 @@ from src.config import (
     APP_DESCRIPTION,
 )
 
-def _get_secret_or_env(key: str, default: str = "") -> str:
-    """Retrieve secret from environment variables or st.secrets safely."""
-    val = os.environ.get(key)
-    if val:
+def get_secret(name: str, default: str = "") -> str:
+    """Retrieve secret from environment variables or st.secrets safely.
+    
+    1. First checks system environment variables (os.environ / os.getenv)
+       — primary for Render, Docker, and CI/CD pipelines.
+    2. Then safely checks st.secrets inside a try-except block without triggering
+       StreamlitSecretNotFoundError on environments where secrets.toml is absent.
+    3. Supports both top-level keys and nested [auth] / [auth.google] sections.
+    """
+    # 1. Environment variable check (os.getenv returns str or None)
+    val = os.getenv(name)
+    if val is not None and val.strip():
         return val.strip()
+
+    # 2. Local Streamlit secrets check (only if available)
     try:
-        if hasattr(st, "secrets") and key in st.secrets:
-            return str(st.secrets[key]).strip()
+        if name in st.secrets:
+            sec_val = st.secrets.get(name)
+            if sec_val is not None and str(sec_val).strip():
+                return str(sec_val).strip()
+
+        # Check nested auth / auth.google tables if defined in secrets.toml
+        auth_sec = st.secrets.get("auth")
+        if isinstance(auth_sec, dict):
+            mapping = {
+                "GOOGLE_REDIRECT_URI": "redirect_uri",
+                "COOKIE_SECRET": "cookie_secret",
+                "GOOGLE_CLIENT_ID": "client_id",
+                "GOOGLE_CLIENT_SECRET": "client_secret",
+            }
+            if name in mapping and mapping[name] in auth_sec:
+                v = auth_sec[mapping[name]]
+                if v:
+                    return str(v).strip()
+
+            google_sec = auth_sec.get("google")
+            if isinstance(google_sec, dict):
+                if name == "GOOGLE_CLIENT_ID" and "client_id" in google_sec:
+                    v = google_sec["client_id"]
+                    if v:
+                        return str(v).strip()
+                if name == "GOOGLE_CLIENT_SECRET" and "client_secret" in google_sec:
+                    v = google_sec["client_secret"]
+                    if v:
+                        return str(v).strip()
     except Exception:
+        # st.secrets is unavailable, secrets.toml missing, or unparseable
         pass
+
     return default
+
+def _get_secret_or_env(key: str, default: str = "") -> str:
+    """Backwards-compatible alias for get_secret."""
+    return get_secret(key, default)
 
 def get_google_credentials():
     """Returns Google Client ID, Secret, and Redirect URI."""
-    client_id = _get_secret_or_env("GOOGLE_CLIENT_ID")
-    client_secret = _get_secret_or_env("GOOGLE_CLIENT_SECRET")
-    redirect_uri = _get_secret_or_env("GOOGLE_REDIRECT_URI", "http://localhost:8501/oauth2callback")
+    client_id = get_secret("GOOGLE_CLIENT_ID", "")
+    client_secret = get_secret("GOOGLE_CLIENT_SECRET", "")
+    redirect_uri = get_secret("GOOGLE_REDIRECT_URI", "http://localhost:8501/oauth2callback")
     return client_id, client_secret, redirect_uri
+
+def get_cookie_secret() -> str:
+    """Returns Cookie Secret for session encryption."""
+    return get_secret("COOKIE_SECRET", "")
 
 @st.cache_data(ttl=3600)
 def fetch_google_oidc_endpoints():
@@ -151,18 +198,7 @@ def render_login_screen():
         </div>
         """, unsafe_allow_html=True)
     else:
-        # Check if Streamlit's native st.login is configured via secrets
-        if hasattr(st, "login"):
-            try:
-                if st.button("🔑 Continue with Google (Streamlit Auth)", use_container_width=True):
-                    try:
-                        st.login("google")
-                    except Exception as login_err:
-                        st.error(f"Google OIDC requires client credentials in Render environment variables or .streamlit/secrets.toml ({login_err}). Please use 'Continue with Demo Access' below.")
-            except Exception:
-                pass
-
-        st.info("💡 **Google OAuth Setup**: Configure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in environment variables or Render dashboard for live Google Cloud OIDC Login.")
+        st.info("💡 **Google OAuth Setup**: Configure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in environment variables (Render) or `.streamlit/secrets.toml` (Local) for live Google Cloud OIDC Login.")
 
     st.markdown("---")
     if st.button("🔐 Continue with Demo Access", use_container_width=True):
