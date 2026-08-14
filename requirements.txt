@@ -22,5 +22,6 @@ reportlab==5.0.0
 # ── Visualisation ──────────────────────────────
 plotly==6.9.0
 
-# ── HTTP / OAuth ───────────────────────────────
+# ── HTTP / OAuth / OIDC ───────────────────────
 requests==2.34.2
+Authlib==1.7.2
