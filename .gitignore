@@ -23,8 +23,7 @@ inspection_history.csv
 inspection_report.pdf
 test.pdf
 
-# Secrets — NEVER commit these
-.streamlit/secrets.toml
+# Secrets — Real production secrets
 .env
 .env.*
 *.secrets.json

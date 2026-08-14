@@ -3,7 +3,9 @@
   "venv": ".venv312",
   "pythonVersion": "3.12",
   "extraPaths": [
+    ".",
     "src"
   ],
-  "reportMissingImports": false
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false
 }
