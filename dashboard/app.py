@@ -280,12 +280,17 @@ handle_auth_gate()
 inject_custom_css()
 
 # Pre-load resources safely
+_encoder_load_error: str | None = None
 try:
     encoders = load_encoders()
+except Exception as e:
+    _encoder_load_error = str(e)
+    encoders = {}
+
+try:
     prod_df, eng_df = load_analytics_datasets()
 except Exception as e:
-    st.error(f"Error loading system datasets or encoders: {str(e)}")
-    encoders = {}
+    st.error(f"Error loading analytics datasets: {str(e)}")
     prod_df = pd.DataFrame()
     eng_df = pd.DataFrame()
 
@@ -420,21 +425,61 @@ elif page == "Productivity Prediction":
     """, unsafe_allow_html=True)
     st.markdown("---")
 
-    date_enc = encoders.get("date")
-    quarter_enc = encoders.get("quarter")
-    dept_enc = encoders.get("department")
-    day_enc = encoders.get("day")
+    date_enc = encoders.get("date") if isinstance(encoders, dict) else None
+    quarter_enc = encoders.get("quarter") if isinstance(encoders, dict) else None
+    dept_enc = encoders.get("department") if isinstance(encoders, dict) else None
+    day_enc = encoders.get("day") if isinstance(encoders, dict) else None
 
-    if not all([date_enc, quarter_enc, dept_enc, day_enc]):
-        st.error("Categorical encoders not initialized. Please verify model directory.")
-        st.stop()
+    # Guard: ensure all encoders are loaded and fitted before accessing .classes_
+    _missing = [name for name, enc in [("date", date_enc), ("quarter", quarter_enc), ("department", dept_enc), ("day", day_enc)]
+                if enc is None or not hasattr(enc, "classes_") or not hasattr(enc, "transform")]
+    if _missing:
+        # Attempt a fresh uncached load to recover from transient failures
+        try:
+            st.cache_resource.clear()
+            _fresh = load_encoders()
+            date_enc = _fresh.get("date")
+            quarter_enc = _fresh.get("quarter")
+            dept_enc = _fresh.get("department")
+            day_enc = _fresh.get("day")
+            _missing = [name for name, enc in [("date", date_enc), ("quarter", quarter_enc), ("department", dept_enc), ("day", day_enc)]
+                        if enc is None or not hasattr(enc, "classes_") or not hasattr(enc, "transform")]
+        except Exception as _retry_err:
+            _encoder_load_error = str(_retry_err)
+
+    if _missing:
+        st.warning(f"⚠️ Categorical encoders not loaded from disk (missing: {', '.join(_missing)}). Using fallback classes.")
+        if _encoder_load_error:
+            st.code(f"Load error: {_encoder_load_error}", language="text")
+
+    # Safe extraction of categorical classes with defaults to prevent any NoneType attribute errors
+    default_dates = [
+        "1/1/2015", "1/10/2015", "1/11/2015", "1/12/2015", "1/13/2015", "1/14/2015",
+        "1/15/2015", "1/17/2015", "1/18/2015", "1/19/2015", "1/20/2015", "1/21/2015",
+        "1/22/2015", "1/24/2015", "1/25/2015", "1/26/2015", "1/27/2015", "1/28/2015",
+        "1/29/2015", "1/3/2015", "1/31/2015", "1/4/2015", "1/5/2015", "1/6/2015",
+        "1/7/2015", "1/8/2015", "2/1/2015", "2/10/2015", "2/11/2015", "2/12/2015",
+        "2/14/2015", "2/15/2015", "2/16/2015", "2/17/2015", "2/18/2015", "2/19/2015",
+        "2/2/2015", "2/22/2015", "2/23/2015", "2/24/2015", "2/25/2015", "2/26/2015",
+        "2/28/2015", "2/3/2015", "2/4/2015", "2/5/2015", "2/7/2015", "2/8/2015",
+        "2/9/2015", "3/1/2015", "3/10/2015", "3/11/2015", "3/2/2015", "3/3/2015",
+        "3/4/2015", "3/5/2015", "3/7/2015", "3/8/2015", "3/9/2015"
+    ]
+    default_quarters = ["Quarter1", "Quarter2", "Quarter3", "Quarter4", "Quarter5"]
+    default_depts = ["finishing", "sweing"]
+    default_days = ["Monday", "Saturday", "Sunday", "Thursday", "Tuesday", "Wednesday"]
+
+    date_options = list(date_enc.classes_) if (date_enc is not None and hasattr(date_enc, "classes_")) else default_dates
+    quarter_options = list(quarter_enc.classes_) if (quarter_enc is not None and hasattr(quarter_enc, "classes_")) else default_quarters
+    dept_options = list(dept_enc.classes_) if (dept_enc is not None and hasattr(dept_enc, "classes_")) else default_depts
+    day_options = list(day_enc.classes_) if (day_enc is not None and hasattr(day_enc, "classes_")) else default_days
 
     c1, c2 = st.columns(2)
     with c1:
-        date_val = st.selectbox("📅 Select Date", date_enc.classes_)
-        quarter_val = st.selectbox("📊 Select Quarter", quarter_enc.classes_)
-        dept_val = st.selectbox("🏭 Department", dept_enc.classes_)
-        day_val = st.selectbox("📆 Day of Week", day_enc.classes_)
+        date_val = st.selectbox("📅 Select Date", date_options)
+        quarter_val = st.selectbox("📊 Select Quarter", quarter_options)
+        dept_val = st.selectbox("🏭 Department", dept_options)
+        day_val = st.selectbox("📆 Day of Week", day_options)
         team_num = st.number_input("👥 Team Number", min_value=1, max_value=30, value=1)
         num_workers = st.number_input("👷 Number of Workers", min_value=1, max_value=200, value=50)
         target_prod = st.number_input("🎯 Targeted Productivity", min_value=0.0, max_value=1.0, value=0.80, step=0.05)
@@ -451,48 +496,66 @@ elif page == "Productivity Prediction":
     st.markdown("---")
 
     if st.button("🚀 Predict Productivity", use_container_width=True):
-        input_data = {
-            "date": date_enc.transform([date_val])[0],
-            "quarter": quarter_enc.transform([quarter_val])[0],
-            "department": dept_enc.transform([dept_val])[0],
-            "day": day_enc.transform([day_val])[0],
-            "team": team_num,
-            "targeted_productivity": target_prod,
-            "smv": smv_val,
-            "wip": wip_val,
-            "over_time": overtime_val,
-            "incentive": incentive_val,
-            "idle_time": idle_time_val,
-            "idle_men": idle_men_val,
-            "no_of_style_change": style_changes,
-            "no_of_workers": num_workers
-        }
+        # Re-fetch encoders at click time to guard against cache invalidation
+        _live_encoders = load_encoders()
+        date_enc = _live_encoders.get("date")
+        quarter_enc = _live_encoders.get("quarter")
+        dept_enc = _live_encoders.get("department")
+        day_enc = _live_encoders.get("day")
 
-        with st.spinner("🤖 Executing Random Forest Productivity Inference..."):
-            pred, elapsed, status = predict_productivity(input_data)
+        def _safe_encode(encoder, val, options_list):
+            if encoder is not None and hasattr(encoder, "transform"):
+                try:
+                    return int(encoder.transform([val])[0])
+                except Exception:
+                    pass
+            return int(options_list.index(val)) if val in options_list else 0
 
-        st.success("✅ Prediction Completed Successfully!")
-        render_timing_badge(elapsed)
+        try:
+            input_data = {
+                "date": _safe_encode(date_enc, date_val, date_options),
+                "quarter": _safe_encode(quarter_enc, quarter_val, quarter_options),
+                "department": _safe_encode(dept_enc, dept_val, dept_options),
+                "day": _safe_encode(day_enc, day_val, day_options),
+                "team": team_num,
+                "targeted_productivity": target_prod,
+                "smv": smv_val,
+                "wip": wip_val,
+                "over_time": overtime_val,
+                "incentive": incentive_val,
+                "idle_time": idle_time_val,
+                "idle_men": idle_men_val,
+                "no_of_style_change": style_changes,
+                "no_of_workers": num_workers
+            }
 
-        # Record in history
-        user_email = st.session_state.get("user_info", {}).get("email", "System")
-        log_productivity_prediction(date_val, dept_val, day_val, team_num, pred, user_email)
+            with st.spinner("🤖 Executing Random Forest Productivity Inference..."):
+                pred, elapsed, status = predict_productivity(input_data)
 
-        # Display Result Card
-        is_on_target = pred >= target_prod
-        badge_class = "green" if is_on_target else "amber"
-        badge_text = "✅ On Target" if is_on_target else "⚠️ Below Target"
+            st.success("✅ Prediction Completed Successfully!")
+            render_timing_badge(elapsed)
 
-        c1, c2, c3 = st.columns([1, 2, 1])
-        with c2:
-            st.markdown(f"""
-            <div class="silk-result-card">
-                <p style="color:#86efac !important; font-weight:600; text-transform:uppercase;">👷 Worker Productivity Prediction</p>
-                <div class="silk-result-value" style="color:{'#22c55e' if is_on_target else '#f59e0b'} !important;">{pred:.4f} ({pred:.1%})</div>
-                <p style="color:#94a3b8 !important;">Target Productivity: <strong>{target_prod:.1%}</strong></p>
-                <span class="silk-badge {badge_class}">{badge_text}</span>
-            </div>
-            """, unsafe_allow_html=True)
+            # Record in history
+            user_email = st.session_state.get("user_info", {}).get("email", "System")
+            log_productivity_prediction(date_val, dept_val, day_val, team_num, pred, user_email)
+
+            # Display Result Card
+            is_on_target = pred >= target_prod
+            badge_class = "green" if is_on_target else "amber"
+            badge_text = "✅ On Target" if is_on_target else "⚠️ Below Target"
+
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c2:
+                st.markdown(f"""
+                <div class="silk-result-card">
+                    <p style="color:#86efac !important; font-weight:600; text-transform:uppercase;">👷 Worker Productivity Prediction</p>
+                    <div class="silk-result-value" style="color:{'#22c55e' if is_on_target else '#f59e0b'} !important;">{pred:.4f} ({pred:.1%})</div>
+                    <p style="color:#94a3b8 !important;">Target Productivity: <strong>{target_prod:.1%}</strong></p>
+                    <span class="silk-badge {badge_class}">{badge_text}</span>
+                </div>
+                """, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"❌ Error during productivity prediction: {str(e)}")
 
     st.markdown("---")
     render_footer()

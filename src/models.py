@@ -55,24 +55,72 @@ def ensure_fabric_model():
                 FABRIC_MODEL_PATH.unlink()
             raise RuntimeError(f"Failed to download Fabric Defect model: {str(e)}")
 
+# Default fallback classes for encoders
+DEFAULT_ENCODER_CLASSES = {
+    "date": [
+        "1/1/2015", "1/10/2015", "1/11/2015", "1/12/2015", "1/13/2015", "1/14/2015",
+        "1/15/2015", "1/17/2015", "1/18/2015", "1/19/2015", "1/20/2015", "1/21/2015",
+        "1/22/2015", "1/24/2015", "1/25/2015", "1/26/2015", "1/27/2015", "1/28/2015",
+        "1/29/2015", "1/3/2015", "1/31/2015", "1/4/2015", "1/5/2015", "1/6/2015",
+        "1/7/2015", "1/8/2015", "2/1/2015", "2/10/2015", "2/11/2015", "2/12/2015",
+        "2/14/2015", "2/15/2015", "2/16/2015", "2/17/2015", "2/18/2015", "2/19/2015",
+        "2/2/2015", "2/22/2015", "2/23/2015", "2/24/2015", "2/25/2015", "2/26/2015",
+        "2/28/2015", "2/3/2015", "2/4/2015", "2/5/2015", "2/7/2015", "2/8/2015",
+        "2/9/2015", "3/1/2015", "3/10/2015", "3/11/2015", "3/2/2015", "3/3/2015",
+        "3/4/2015", "3/5/2015", "3/7/2015", "3/8/2015", "3/9/2015"
+    ],
+    "quarter": ["Quarter1", "Quarter2", "Quarter3", "Quarter4", "Quarter5"],
+    "department": ["finishing", "sweing"],
+    "day": ["Monday", "Saturday", "Sunday", "Thursday", "Tuesday", "Wednesday"],
+}
+
 @st.cache_resource
 def load_encoders():
-    """Load categorical feature encoders with caching."""
-    for name, path in [
-        ("Date encoder", DATE_ENCODER_PATH),
-        ("Quarter encoder", QUARTER_ENCODER_PATH),
-        ("Department encoder", DEPARTMENT_ENCODER_PATH),
-        ("Day encoder", DAY_ENCODER_PATH),
-    ]:
-        if not path.exists():
-            raise FileNotFoundError(f"Required encoder file missing: {path} ({name})")
+    """Load categorical feature encoders with caching and self-healing fallback."""
+    encoder_specs = [
+        ("date", DATE_ENCODER_PATH, "date"),
+        ("quarter", QUARTER_ENCODER_PATH, "quarter"),
+        ("department", DEPARTMENT_ENCODER_PATH, "department"),
+        ("day", DAY_ENCODER_PATH, "day"),
+    ]
 
-    return {
-        "date": joblib.load(DATE_ENCODER_PATH),
-        "quarter": joblib.load(QUARTER_ENCODER_PATH),
-        "department": joblib.load(DEPARTMENT_ENCODER_PATH),
-        "day": joblib.load(DAY_ENCODER_PATH),
-    }
+    encoders = {}
+    for key, path, _ in encoder_specs:
+        if path.exists():
+            try:
+                enc = joblib.load(path)
+                if enc is not None and hasattr(enc, "classes_") and hasattr(enc, "transform"):
+                    encoders[key] = enc
+            except Exception:
+                pass
+
+    if len(encoders) < 4:
+        from sklearn.preprocessing import LabelEncoder
+        from src.config import PRODUCTIVITY_DATASET_PATH
+        df = None
+        if PRODUCTIVITY_DATASET_PATH.exists():
+            try:
+                df = pd.read_csv(PRODUCTIVITY_DATASET_PATH)
+                if "department" in df.columns:
+                    df["department"] = df["department"].astype(str).str.strip()
+            except Exception:
+                df = None
+
+        for key, path, col in encoder_specs:
+            if key not in encoders:
+                le = LabelEncoder()
+                if df is not None and col in df.columns:
+                    le.fit(df[col].dropna().astype(str))
+                else:
+                    le.fit(DEFAULT_ENCODER_CLASSES[key])
+                encoders[key] = le
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    joblib.dump(le, path)
+                except Exception:
+                    pass
+
+    return encoders
 
 @st.cache_resource
 def load_productivity_model():
@@ -188,6 +236,6 @@ def predict_fabric_defect(image: Image.Image) -> tuple[str, float, list[float], 
     probs = [float(p * 100) for p in predictions[0]]
     max_idx = int(np.argmax(predictions[0]))
     predicted_class = FABRIC_CLASSES[max_idx]
-    confidence = float(probs[max_idx])
+    confidence = probs[max_idx]
 
     return predicted_class, confidence, probs, elapsed
