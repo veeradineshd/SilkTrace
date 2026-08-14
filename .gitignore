@@ -50,3 +50,6 @@ scratch/
 
 # VS Code workspace settings (local-only)
 .vscode/
+
+# Scratch notes
+CREATE TABLE order1(.txt

@@ -1,37 +1,29 @@
-import joblib
+# SilkTrace — Prediction API Bridge
 import pandas as pd
-from pathlib import Path
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-PRODUCTIVITY_MODEL_PATH = BASE_DIR / "models" / "productivity_model.pkl"
-ENERGY_MODEL_PATH = BASE_DIR / "models" / "energy_model.pkl"
-
-_productivity_model = None
-_energy_model = None
+from src.models import (
+    load_productivity_model,
+    load_energy_model,
+    predict_productivity as _predict_productivity_impl,
+    predict_energy as _predict_energy_impl,
+)
 
 def get_productivity_model():
-    global _productivity_model
-    if _productivity_model is None:
-        if not PRODUCTIVITY_MODEL_PATH.exists():
-            raise FileNotFoundError(f"Productivity model not found at {PRODUCTIVITY_MODEL_PATH}")
-        _productivity_model = joblib.load(PRODUCTIVITY_MODEL_PATH)
-    return _productivity_model
+    """Retrieve cached productivity model."""
+    return load_productivity_model()
 
 def get_energy_model():
-    global _energy_model
-    if _energy_model is None:
-        if not ENERGY_MODEL_PATH.exists():
-            raise FileNotFoundError(f"Energy model not found at {ENERGY_MODEL_PATH}")
-        _energy_model = joblib.load(ENERGY_MODEL_PATH)
-    return _energy_model
+    """Retrieve cached energy model."""
+    return load_energy_model()
 
 def predict_productivity(data):
+    """Predict productivity for single dictionary or DataFrame input."""
     model = get_productivity_model()
     df = pd.DataFrame([data]) if isinstance(data, dict) else data
     prediction = model.predict(df)
     return prediction[0]
 
 def predict_energy(data):
+    """Predict energy usage for single dictionary or DataFrame input."""
     model = get_energy_model()
     df = pd.DataFrame([data]) if isinstance(data, dict) else data
     prediction = model.predict(df)

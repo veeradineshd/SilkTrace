@@ -1,424 +1,159 @@
+# SilkTrace — Production Streamlit Application Entrypoint
 import os
-import urllib.parse
-import urllib.request
-import requests
-import streamlit as st
-import joblib
 import time
-import pandas as pd
-import numpy as np
+import sys
+import platform
+from datetime import datetime
 from pathlib import Path
 from PIL import Image
+import pandas as pd
+import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Table,
-    TableStyle,
-    Paragraph
-)
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
+import streamlit as st
 from streamlit_option_menu import option_menu
 
-
-# ==================== PROJECT PATHS ====================
-# All paths derived from this file — works on both Windows and Render Linux
+# Ensure src module is in path
 BASE_DIR = Path(__file__).resolve().parent.parent
-LOGO_PATH = Path(__file__).resolve().parent / "silktrace_logo.png"
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-PRODUCTIVITY_MODEL_PATH = BASE_DIR / "models" / "productivity_model.pkl"
-ENERGY_MODEL_PATH = BASE_DIR / "models" / "energy_model.pkl"
-FABRIC_MODEL_PATH = BASE_DIR / "models" / "fabric_defect_model.keras"
+# Import modular components
+from src.config import (
+    APP_NAME,
+    APP_VERSION,
+    APP_DESCRIPTION,
+    DEVELOPER_NAME,
+    DEVELOPER_INSTITUTION,
+    LOGO_PATH,
+    PRODUCTIVITY_MODEL_PATH,
+    ENERGY_MODEL_PATH,
+    FABRIC_MODEL_PATH,
+    DATE_ENCODER_PATH,
+    QUARTER_ENCODER_PATH,
+    DEPARTMENT_ENCODER_PATH,
+    DAY_ENCODER_PATH,
+    PRODUCTIVITY_DATASET_PATH,
+    ENERGY_DATASET_PATH,
+    FABRIC_RECOMMENDATIONS,
+)
+from src.auth import handle_auth_gate, render_sidebar_user_profile, is_feature_allowed_for_user
+from src.models import (
+    load_encoders,
+    load_productivity_model,
+    load_energy_model,
+    load_fabric_model,
+    predict_productivity,
+    predict_energy,
+    predict_fabric_defect,
+)
+from src.reports import create_pdf_report
+from src.history import (
+    log_energy_prediction,
+    log_productivity_prediction,
+    log_fabric_inspection,
+    load_energy_history,
+    load_productivity_history,
+    load_inspection_history,
+)
+from src.analytics import (
+    load_analytics_datasets,
+    compute_executive_kpis,
+    generate_operational_alerts,
+    create_department_productivity_chart,
+    create_quarterly_productivity_trend_chart,
+    create_energy_load_pie_chart,
+    create_power_factor_analysis_chart,
+)
 
-DATE_ENCODER_PATH = BASE_DIR / "models" / "date_encoder.pkl"
-QUARTER_ENCODER_PATH = BASE_DIR / "models" / "quarter_encoder.pkl"
-DEPARTMENT_ENCODER_PATH = BASE_DIR / "models" / "department_encoder.pkl"
-DAY_ENCODER_PATH = BASE_DIR / "models" / "day_encoder.pkl"
-PRODUCTIVITY_ENCODER_PATH = BASE_DIR / "models" / "productivity_encoder.pkl"
-
-REPORTS_DIR = BASE_DIR / "reports"
-REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-
-HISTORY_DIR = BASE_DIR / "history"
-HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-
+# Page Configuration
 st.set_page_config(
-    page_title="SilkTrace",
+    page_title=f"{APP_NAME} — AI Textile Intelligence",
     page_icon="🧵",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ==================== GOOGLE OAUTH CONFIGURATION ====================
-def _get_st_secret(key, default=""):
-    try:
-        return st.secrets.get(key, default)
-    except Exception:
-        return default
-
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID") or _get_st_secret("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET") or _get_st_secret("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI") or _get_st_secret("GOOGLE_REDIRECT_URI", "https://silktrace.onrender.com")
-
-def get_google_auth_url():
-    base_url = "https://accounts.google.com/o/oauth2/v2/auth"
-    params = {
-        "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": GOOGLE_REDIRECT_URI,
-        "response_type": "code",
-        "scope": "openid email profile",
-        "access_type": "online",
-        "prompt": "select_account"
-    }
-    return f"{base_url}?{urllib.parse.urlencode(params)}"
-
-def exchange_code_for_user_info(code):
-    token_url = "https://oauth2.googleapis.com/token"
-    payload = {
-        "code": code,
-        "client_id": GOOGLE_CLIENT_ID,
-        "client_secret": GOOGLE_CLIENT_SECRET,
-        "redirect_uri": GOOGLE_REDIRECT_URI,
-        "grant_type": "authorization_code"
-    }
-    res = requests.post(token_url, data=payload, timeout=10)
-    if res.status_code != 200:
-        raise RuntimeError(f"Token exchange failed ({res.status_code}): {res.text}")
-    tokens = res.json()
-    access_token = tokens.get("access_token")
-    
-    userinfo_url = "https://www.googleapis.com/oauth2/v3/userinfo"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    user_res = requests.get(userinfo_url, headers=headers, timeout=10)
-    if user_res.status_code != 200:
-        raise RuntimeError(f"Failed to fetch user info ({user_res.status_code}): {user_res.text}")
-    return user_res.json()
-
-def render_login_screen():
-    inject_custom_css()
-    st.markdown("""
-    <div style="max-width: 580px; margin: 40px auto; padding: 40px; background: rgba(15, 23, 42, 0.95); border-radius: 24px; border: 1px solid rgba(96, 165, 250, 0.3); box-shadow: 0 25px 60px rgba(0,0,0,0.6); text-align: center;">
-        <div style="font-size: 64px; margin-bottom: 8px;">🧵</div>
-        <h1 style="color: #ffffff; font-size: 2.5rem; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.5px;">SilkTrace</h1>
-        <p style="color: #60a5fa; font-size: 1.1rem; font-weight: 500; margin-bottom: 24px;">AI-Powered Textile Manufacturing Intelligence</p>
-        
-        <div style="background: rgba(30, 41, 59, 0.7); padding: 20px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 28px; text-align: left;">
-            <p style="color: #f8fafc; font-weight: 600; margin-bottom: 10px; font-size: 0.95rem;">🔒 Authenticated Dashboard Access</p>
-            <p style="color: #94a3b8; font-size: 0.88rem; margin: 4px 0;">• Real-Time Energy Consumption Forecasting</p>
-            <p style="color: #94a3b8; font-size: 0.88rem; margin: 4px 0;">• Garment Worker Productivity Predictions</p>
-            <p style="color: #94a3b8; font-size: 0.88rem; margin: 4px 0;">• MobileNetV2 Fabric Defect Quality Control</p>
-        </div>
-    """, unsafe_allow_html=True)
-
-    if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
-        auth_url = get_google_auth_url()
-        st.markdown(f"""
-        <div style="margin-top: 15px; margin-bottom: 15px;">
-            <a href="{auth_url}" target="_self" style="display: inline-flex; align-items: center; justify-content: center; background-color: #ffffff; color: #0f172a; text-decoration: none; padding: 14px 32px; border-radius: 12px; font-weight: 700; font-size: 1.05rem; box-shadow: 0 8px 25px rgba(255, 255, 255, 0.15); transition: all 0.2s ease;">
-                <svg style="width: 20px; height: 20px; margin-right: 12px;" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                    <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.62z"/>
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-                </svg>
-                Continue with Google
-            </a>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.info("💡 **Google OAuth Configuration**: Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in environment variables or Render dashboard for live Google Sign-In.")
-
-    if st.button("🔐 Continue with Demo Access", use_container_width=True):
-        st.session_state["authenticated"] = True
-        st.session_state["user_info"] = {
-            "name": "SilkTrace Admin",
-            "email": "admin@silktrace.ai",
-            "picture": ""
-        }
-        st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ==================== CUSTOM STYLING ====================
+# ==================== DESIGN SYSTEM & STYLING ====================
 def inject_custom_css():
-    """Inject professional custom CSS styling with design-system variables"""
+    """Inject standard SilkTrace dark-theme glassmorphism CSS design tokens."""
     st.markdown("""
     <style>
-    /* ===========================
-       GOOGLE FONTS
-    =========================== */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-    /* ===========================
-       DESIGN SYSTEM — CSS VARIABLES
-    =========================== */
     :root {
-        /* — Primary Palette — */
         --color-primary: #3b82f6;
         --color-primary-hover: #2563eb;
         --color-primary-dark: #1d4ed8;
         --color-primary-light: #60a5fa;
-        --color-primary-glow: rgba(59, 130, 246, 0.35);
-
-        /* — Surface / Background — */
         --color-bg-deep: #0f172a;
         --color-bg-base: #1a1f35;
         --color-bg-surface: rgba(25, 35, 65, 0.95);
         --color-bg-card: rgba(20, 35, 60, 0.7);
-        --color-bg-card-hover: rgba(20, 35, 60, 0.92);
-        --color-bg-input: rgba(20, 35, 60, 0.7);
-
-        /* — Accent Colors — */
         --color-green: #22c55e;
-        --color-green-dark: #16a34a;
         --color-amber: #f59e0b;
-        --color-amber-dark: #d97706;
         --color-red: #ef4444;
         --color-cyan: #0ea5e9;
-
-        /* — Text — */
         --color-text-primary: #ffffff;
         --color-text-secondary: #e2e8f0;
         --color-text-tertiary: #94a3b8;
-        --color-text-accent: #bfdbfe;
-        --color-text-heading: #e0f2fe;
-
-        /* — Borders — */
         --color-border: rgba(96, 165, 250, 0.25);
-        --color-border-hover: rgba(96, 165, 250, 0.55);
-        --color-border-subtle: rgba(96, 165, 250, 0.12);
-
-        /* — Sizing — */
-        --radius-sm: 8px;
         --radius-md: 12px;
         --radius-lg: 16px;
         --radius-xl: 20px;
-
-        /* — Shadows — */
-        --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-        --shadow-card-hover: 0 20px 48px rgba(59, 130, 246, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-        --shadow-button: 0 6px 20px rgba(59, 130, 246, 0.3);
-
-        /* — Transitions — */
-        --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-        --transition-base: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        --transition-slow: 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-
-        /* — Typography — */
-        --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+        --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.3);
+        --shadow-card-hover: 0 20px 48px rgba(59, 130, 246, 0.25);
+        --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    /* ===========================
-       RESET & BASE
-    =========================== */
-    * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-    }
-
-    html, body, [data-testid="stAppViewContainer"], .main {
-        font-family: var(--font-body);
-    }
-
-    /* ===========================
-       KEYFRAME ANIMATIONS
-    =========================== */
-    @keyframes fadeInUp {
-        from { opacity: 0; transform: translateY(24px); }
-        to   { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes fadeIn {
-        from { opacity: 0; }
-        to   { opacity: 1; }
-    }
-
-    @keyframes pulseGlow {
-        0%, 100% { box-shadow: 0 0 8px rgba(34, 197, 94, 0.4); }
-        50%      { box-shadow: 0 0 20px rgba(34, 197, 94, 0.7); }
-    }
-
-    @keyframes gradientShift {
-        0%   { background-position: 0% 50%; }
-        50%  { background-position: 100% 50%; }
-        100% { background-position: 0% 50%; }
-    }
-
-    @keyframes shimmer {
-        0%   { background-position: -200% 0; }
-        100% { background-position: 200% 0; }
-    }
-
-    /* ===========================
-       MAIN BACKGROUND & CONTAINER
-    =========================== */
-    html, body {
-        background: linear-gradient(135deg, var(--color-bg-base) 0%, #2d3748 50%, var(--color-bg-base) 100%);
-        min-height: 100vh;
-    }
+    * { box-sizing: border-box; }
+    html, body, [data-testid="stAppViewContainer"], .main { font-family: var(--font-body); }
 
     [data-testid="stAppViewContainer"] {
         background: linear-gradient(135deg, var(--color-bg-base) 0%, #2d3748 50%, var(--color-bg-base) 100%);
-        padding-top: 1rem;
-    }
-
-    .main {
-        background: transparent;
     }
 
     .main .block-container {
         background: linear-gradient(135deg, var(--color-bg-surface), rgba(45, 55, 90, 0.95));
         backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
         padding: 2.5rem;
         border-radius: var(--radius-lg);
         border: 1.5px solid var(--color-border);
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-        margin-top: 1.5rem;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+        margin-top: 1rem;
         margin-bottom: 1.5rem;
-        animation: fadeIn 0.6s ease-out;
     }
 
-    /* ===========================
-       HEADINGS & TEXT
-    =========================== */
-    h1, h2, h3, h4, h5, h6 {
-        color: var(--color-text-primary) !important;
-        font-family: var(--font-body);
-        font-weight: 700;
-        letter-spacing: -0.5px;
-        line-height: 1.3;
-    }
+    h1, h2, h3, h4 { color: var(--color-text-primary) !important; font-weight: 700; }
+    p, span, div, label { color: var(--color-text-secondary) !important; }
 
-    h1 {
-        font-size: 2.5rem;
-        margin-bottom: 1.5rem;
-        color: var(--color-text-heading) !important;
-    }
-
-    h2 {
-        font-size: 1.875rem;
-        margin-top: 2rem;
-        margin-bottom: 1rem;
-        color: #f0f9ff !important;
-    }
-
-    h3 {
-        font-size: 1.5rem;
-        margin-top: 1.5rem;
-        margin-bottom: 0.75rem;
-        color: var(--color-text-heading) !important;
-    }
-
-    h4 {
-        font-size: 1.25rem;
-        color: #f0f9ff !important;
-    }
-
-    p, span, div, label {
-        color: var(--color-text-secondary) !important;
-    }
-
-    .stMarkdown, .stMarkdown p {
-        color: var(--color-text-secondary) !important;
-    }
-
-    /* ===========================
-       SIDEBAR (UNCHANGED THEME/COLORS)
-    =========================== */
     section[data-testid="stSidebar"] {
         background: linear-gradient(180deg, #1a2847 0%, #2d3e5f 100%);
         border-right: 1.5px solid rgba(96, 165, 250, 0.2);
     }
+    section[data-testid="stSidebar"] * { color: #ffffff !important; }
 
-    section[data-testid="stSidebar"] * {
-        color: #ffffff !important;
-    }
-
-    section[data-testid="stSidebar"] p,
-    section[data-testid="stSidebar"] span,
-    section[data-testid="stSidebar"] div {
-        color: #e2e8f0 !important;
-    }
-
-    section[data-testid="stSidebar"] .stMarkdown h1,
-    section[data-testid="stSidebar"] .stMarkdown h2,
-    section[data-testid="stSidebar"] .stMarkdown h3 {
-        color: #ffffff !important;
-    }
-
-    section[data-testid="stSidebar"] label {
-        color: var(--color-text-heading) !important;
-    }
-
-    /* ===========================
-       METRIC CARDS
-    =========================== */
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, rgba(30, 58, 95, 0.8), rgba(20, 45, 75, 0.8));
         border: 1.5px solid var(--color-border);
         border-radius: var(--radius-md);
-        padding: 1.5rem;
+        padding: 1.25rem;
         box-shadow: var(--shadow-card);
-        transition: all var(--transition-base);
     }
+    [data-testid="metric-container"] label { color: #bfdbfe !important; font-weight: 600; text-transform: uppercase; }
+    [data-testid="metric-container"] [data-testid="stMetricValue"] { color: #60a5fa !important; font-weight: 800; }
 
-    [data-testid="metric-container"]:hover {
-        transform: translateY(-4px);
-        border-color: var(--color-border-hover);
-        box-shadow: var(--shadow-card-hover);
-        background: linear-gradient(135deg, rgba(30, 58, 95, 0.95), rgba(20, 45, 75, 0.95));
-    }
-
-    [data-testid="metric-container"] label {
-        color: var(--color-text-accent) !important;
-        font-weight: 600;
-        font-size: 0.875rem;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    [data-testid="metric-container"] [data-testid="stMetricValue"] {
-        color: var(--color-primary-light) !important;
-        font-weight: 700;
-        font-size: 1.75rem;
-    }
-
-    [data-testid="metric-container"] span {
-        color: var(--color-text-accent) !important;
-    }
-
-    /* ===========================
-       BUTTONS
-    =========================== */
     .stButton > button {
         background: linear-gradient(135deg, var(--color-primary), var(--color-primary-hover));
         color: white !important;
         border: none;
         border-radius: var(--radius-md);
-        font-family: var(--font-body);
         font-weight: 600;
-        font-size: 0.95rem;
         padding: 0.75rem 1.5rem;
-        transition: all var(--transition-base);
-        box-shadow: var(--shadow-button);
-        text-transform: none;
-        letter-spacing: 0.2px;
+        box-shadow: 0 6px 20px rgba(59, 130, 246, 0.3);
     }
-
     .stButton > button:hover {
         background: linear-gradient(135deg, var(--color-primary-hover), var(--color-primary-dark));
         transform: translateY(-2px);
-        box-shadow: 0 12px 28px rgba(59, 130, 246, 0.4);
-        color: white !important;
-    }
-
-    .stButton > button:active {
-        transform: translateY(0);
     }
 
     .stDownloadButton > button {
@@ -426,333 +161,22 @@ def inject_custom_css():
         color: white !important;
         border: 1.5px solid var(--color-border);
         border-radius: var(--radius-md);
-        font-family: var(--font-body);
         font-weight: 600;
-        font-size: 0.9rem;
         padding: 0.7rem 1.25rem;
-        transition: all var(--transition-base);
     }
-
     .stDownloadButton > button:hover {
         border-color: var(--color-primary-light);
-        background: linear-gradient(135deg, rgba(30, 58, 95, 1), rgba(20, 45, 75, 1));
-        box-shadow: 0 8px 24px rgba(59, 130, 246, 0.25);
         transform: translateY(-2px);
-        color: white !important;
     }
 
-    /* ===========================
-       INPUT FIELDS
-    =========================== */
-    .stTextInput input,
-    .stNumberInput input,
-    .stTextArea textarea {
-        background: var(--color-bg-input) !important;
-        border: 1.5px solid var(--color-border) !important;
-        border-radius: var(--radius-md) !important;
-        color: var(--color-text-primary) !important;
-        font-family: var(--font-body);
-        font-size: 0.95rem;
-        padding: 0.75rem 1rem !important;
-        transition: all var(--transition-base);
-    }
-
-    .stTextInput input:focus,
-    .stNumberInput input:focus,
-    .stTextArea textarea:focus {
-        background: rgba(20, 35, 60, 0.9) !important;
-        border-color: var(--color-primary-light) !important;
-        box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.2) !important;
-        color: var(--color-text-primary) !important;
-    }
-
-    .stTextInput input::placeholder,
-    .stNumberInput input::placeholder,
-    .stTextArea textarea::placeholder {
-        color: #64748b !important;
-    }
-
-    .stSelectbox label,
-    .stTextInput label,
-    .stNumberInput label,
-    .stTextArea label {
-        color: var(--color-text-heading) !important;
-        font-weight: 500;
-        font-size: 0.9rem;
-    }
-
-    /* Selectbox dropdown styling */
-    [data-baseweb="select"] {
-        background: var(--color-bg-input);
-        border-radius: var(--radius-md);
-    }
-
-    [data-baseweb="select"] > div {
-        background: var(--color-bg-input) !important;
-        border: 1.5px solid var(--color-border) !important;
-        border-radius: var(--radius-md) !important;
-        color: var(--color-text-primary) !important;
-        transition: all var(--transition-base);
-    }
-
-    [data-baseweb="select"] > div:hover {
-        border-color: var(--color-border-hover) !important;
-    }
-
-    /* ===========================
-       CHECKBOX & RADIO
-    =========================== */
-    .stCheckbox label,
-    .stRadio label {
-        color: var(--color-text-heading) !important;
-        font-weight: 500;
-    }
-
-    /* ===========================
-       ALERTS — SUCCESS / INFO / WARNING / ERROR
-    =========================== */
-    [data-testid="stAlert"] {
-        border-radius: var(--radius-md);
-        padding: 1rem 1.25rem;
-        font-size: 0.95rem;
-        backdrop-filter: blur(4px);
-    }
-
-    /* Success */
-    .stSuccess, div[data-testid="stAlert"]:has(> div[role="alert"][data-baseweb="notification"][kind="positive"]) {
-        background: rgba(34, 197, 94, 0.12);
-        border-left: 4px solid var(--color-green);
-        border-radius: var(--radius-md);
-        padding: 1rem 1.25rem;
-    }
-    .stSuccess p, .stSuccess span, .stSuccess div { color: #d1fae5 !important; }
-
-    /* Info */
-    .stInfo, div[data-testid="stAlert"]:has(> div[role="alert"][data-baseweb="notification"][kind="info"]) {
-        background: rgba(59, 130, 246, 0.12);
-        border-left: 4px solid var(--color-primary);
-        border-radius: var(--radius-md);
-        padding: 1rem 1.25rem;
-    }
-    .stInfo p, .stInfo span, .stInfo div { color: var(--color-text-accent) !important; }
-
-    /* Warning */
-    .stWarning, div[data-testid="stAlert"]:has(> div[role="alert"][data-baseweb="notification"][kind="warning"]) {
-        background: rgba(245, 158, 11, 0.12);
-        border-left: 4px solid var(--color-amber);
-        border-radius: var(--radius-md);
-        padding: 1rem 1.25rem;
-    }
-    .stWarning p, .stWarning span, .stWarning div { color: #fde68a !important; }
-
-    /* Error */
-    .stError, div[data-testid="stAlert"]:has(> div[role="alert"][data-baseweb="notification"][kind="negative"]) {
-        background: rgba(239, 68, 68, 0.12);
-        border-left: 4px solid var(--color-red);
-        border-radius: var(--radius-md);
-        padding: 1rem 1.25rem;
-    }
-    .stError p, .stError span, .stError div { color: #fecaca !important; }
-
-    /* ===========================
-       DIVIDER
-    =========================== */
-    hr {
-        border: none;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(96, 165, 250, 0.2), transparent);
-        margin: 2rem 0;
-    }
-
-    /* ===========================
-       TABLES & DATAFRAMES
-    =========================== */
-    [data-testid="stDataFrame"] {
-        border: 1.5px solid var(--color-border);
-        border-radius: var(--radius-md);
-        overflow: hidden;
-        background: linear-gradient(135deg, var(--color-bg-card), rgba(20, 35, 60, 0.6));
-    }
-
-    .dataframe {
-        border-radius: var(--radius-md);
-    }
-
-    tbody tr {
-        border-color: var(--color-border-subtle);
-        transition: background var(--transition-fast);
-    }
-
-    tbody tr:hover {
-        background: rgba(59, 130, 246, 0.12) !important;
-    }
-
-    tbody td {
-        color: var(--color-text-secondary) !important;
-        border-color: var(--color-border-subtle);
-    }
-
-    thead th {
-        background: rgba(15, 35, 65, 0.85);
-        color: var(--color-text-heading) !important;
-        font-weight: 700;
-        border-color: rgba(96, 165, 250, 0.2);
-        text-transform: uppercase;
-        font-size: 0.8rem;
-        letter-spacing: 0.5px;
-    }
-
-    /* ===========================
-       EXPANDER
-    =========================== */
-    details {
-        background: linear-gradient(135deg, var(--color-bg-card), rgba(15, 30, 55, 0.7));
-        border: 1.5px solid var(--color-border);
-        border-radius: var(--radius-md);
-        padding: 1rem;
-        transition: all var(--transition-base);
-    }
-
-    details:hover {
-        background: linear-gradient(135deg, var(--color-bg-card-hover), rgba(15, 30, 55, 0.85));
-        border-color: rgba(96, 165, 250, 0.4);
-    }
-
-    details summary {
-        cursor: pointer;
-        color: var(--color-text-heading) !important;
-        font-weight: 600;
-        user-select: none;
-    }
-
-    /* ===========================
-       FILE UPLOADER
-    =========================== */
-    [data-testid="stFileUploader"] {
-        background: linear-gradient(135deg, var(--color-bg-card), rgba(15, 30, 55, 0.7));
-        border: 2px dashed rgba(96, 165, 250, 0.35);
-        border-radius: var(--radius-lg);
-        padding: 2rem;
-        transition: all var(--transition-base);
-    }
-
-    [data-testid="stFileUploader"] label,
-    [data-testid="stFileUploader"] p,
-    [data-testid="stFileUploader"] span,
-    [data-testid="stFileUploader"] div {
-        color: var(--color-text-heading) !important;
-    }
-
-    [data-testid="stFileUploader"]:hover {
-        background: linear-gradient(135deg, var(--color-bg-card-hover), rgba(15, 30, 55, 0.85));
-        border-color: var(--color-primary-light);
-        box-shadow: 0 0 24px rgba(59, 130, 246, 0.15);
-    }
-
-    /* ===========================
-       PROGRESS BAR
-    =========================== */
-    .stProgress > div > div {
-        background: linear-gradient(90deg, var(--color-primary), var(--color-cyan));
-        border-radius: 10px;
-    }
-
-    /* ===========================
-       CAPTIONS & SMALL TEXT
-    =========================== */
-    .streamlit-caption, .small-text {
-        color: var(--color-text-accent) !important;
-        font-size: 0.85rem;
-        margin-top: 1.5rem;
-        padding-top: 1rem;
-        border-top: 1px solid var(--color-border-subtle);
-    }
-
-    /* ===========================
-       SCROLLBAR
-    =========================== */
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-track { background: rgba(15, 30, 55, 0.5); }
-    ::-webkit-scrollbar-thumb { background: rgba(96, 165, 250, 0.5); border-radius: 10px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(96, 165, 250, 0.7); }
-
-    /* ===========================
-       CODE BLOCKS
-    =========================== */
-    pre, code {
-        background: rgba(15, 30, 55, 0.8);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-sm);
-        color: var(--color-text-accent) !important;
-        font-family: var(--font-mono);
-        padding: 0.5rem 0.75rem;
-    }
-
-    pre {
-        padding: 1rem;
-    }
-
-    /* ===========================
-       LINKS
-    =========================== */
-    a {
-        color: var(--color-primary-light);
-        text-decoration: none;
-        transition: color var(--transition-base);
-        font-weight: 500;
-    }
-
-    a:hover {
-        color: #93c5fd;
-        text-decoration: underline;
-    }
-
-    /* ===========================
-       TABS
-    =========================== */
-    .stTabs [data-baseweb="tab-list"] button {
-        color: var(--color-text-secondary) !important;
-        font-weight: 600;
-        font-family: var(--font-body);
-        transition: all var(--transition-fast);
-    }
-
-    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
-        color: var(--color-primary-light) !important;
-        border-bottom-color: var(--color-primary-light) !important;
-    }
-
-    /* ===========================
-       ADDITIONAL TEXT ELEMENTS
-    =========================== */
-    .stText, .element-container, .stSelectbox, .stMultiSelect {
-        color: var(--color-text-secondary) !important;
-    }
-
-    /* ===========================
-       REUSABLE COMPONENT CLASSES
-    =========================== */
-
-    /* — Glassmorphic Card — */
     .silk-card {
         background: linear-gradient(135deg, rgba(20, 35, 65, 0.85), rgba(15, 30, 55, 0.85));
         border: 1.5px solid var(--color-border);
         border-radius: var(--radius-lg);
         padding: 1.75rem;
         box-shadow: var(--shadow-card);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        transition: all var(--transition-base);
-        animation: fadeInUp 0.5s ease-out;
     }
 
-    .silk-card:hover {
-        transform: translateY(-4px);
-        border-color: var(--color-border-hover);
-        box-shadow: var(--shadow-card-hover);
-    }
-
-    /* — Hero Section — */
     .silk-hero {
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 58, 138, 0.6), rgba(15, 23, 42, 0.95));
         border: 1.5px solid var(--color-border);
@@ -760,288 +184,62 @@ def inject_custom_css():
         padding: 3rem 2.5rem;
         text-align: center;
         box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
-        position: relative;
-        overflow: hidden;
-        animation: fadeInUp 0.6s ease-out;
     }
-
-    .silk-hero::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: linear-gradient(135deg, transparent 30%, rgba(59, 130, 246, 0.05) 50%, transparent 70%);
-        background-size: 200% 200%;
-        animation: gradientShift 8s ease infinite;
-        pointer-events: none;
-    }
-
     .silk-hero-title {
-        font-size: 3rem;
-        font-weight: 800;
-        letter-spacing: -1px;
-        background: linear-gradient(135deg, #e0f2fe, #60a5fa, #e0f2fe);
-        background-size: 200% auto;
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        animation: shimmer 4s linear infinite;
+        font-size: 3rem; font-weight: 800;
+        color: #e0f2fe !important;
         margin-bottom: 0.5rem;
     }
-
     .silk-hero-subtitle {
-        font-size: 1.15rem;
-        color: #94a3b8 !important;
-        font-weight: 400;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        margin-bottom: 1.5rem;
+        font-size: 1.15rem; color: #94a3b8 !important;
+        letter-spacing: 1px; margin-bottom: 1.5rem;
     }
 
-    .silk-hero-status {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        background: rgba(34, 197, 94, 0.12);
-        border: 1px solid rgba(34, 197, 94, 0.3);
-        border-radius: 20px;
-        padding: 6px 16px;
-        font-size: 0.85rem;
-        color: #86efac !important;
-        font-weight: 600;
-    }
-
-    .silk-hero-status-dot {
-        width: 8px;
-        height: 8px;
-        background: #22c55e;
-        border-radius: 50%;
-        animation: pulseGlow 2s ease-in-out infinite;
-    }
-
-    /* — Module Cards — */
     .silk-module-card {
         background: linear-gradient(135deg, rgba(20, 35, 65, 0.9), rgba(15, 30, 55, 0.9));
         border: 1.5px solid var(--color-border);
         border-radius: var(--radius-lg);
         padding: 1.75rem;
-        box-shadow: var(--shadow-card);
-        transition: all var(--transition-base);
-        position: relative;
-        overflow: hidden;
         min-height: 200px;
     }
 
-    .silk-module-card::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0;
-        height: 3px;
-        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    }
-
-    .silk-module-card:hover {
-        transform: translateY(-6px);
-        border-color: var(--color-border-hover);
-        box-shadow: var(--shadow-card-hover);
-    }
-
-    .silk-module-card.green::before  { background: linear-gradient(90deg, #22c55e, #16a34a); }
-    .silk-module-card.amber::before  { background: linear-gradient(90deg, #f59e0b, #d97706); }
-    .silk-module-card.blue::before   { background: linear-gradient(90deg, #0ea5e9, #0284c7); }
-
-    .silk-module-icon {
-        width: 48px;
-        height: 48px;
-        border-radius: var(--radius-md);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.5rem;
-        margin-bottom: 1rem;
-    }
-
-    .silk-module-icon.green  { background: rgba(34, 197, 94, 0.15); }
-    .silk-module-icon.amber  { background: rgba(245, 158, 11, 0.15); }
-    .silk-module-icon.blue   { background: rgba(14, 165, 233, 0.15); }
-
-    /* — Result Cards — */
     .silk-result-card {
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 58, 95, 0.95));
         border: 1.5px solid var(--color-border);
         border-radius: var(--radius-lg);
         padding: 2rem;
         text-align: center;
-        box-shadow: var(--shadow-card);
-        animation: fadeInUp 0.4s ease-out;
-        transition: all var(--transition-base);
     }
+    .silk-result-value { font-size: 2.75rem; font-weight: 800; margin: 0.75rem 0; }
 
-    .silk-result-card:hover {
-        border-color: var(--color-border-hover);
-        box-shadow: var(--shadow-card-hover);
-    }
-
-    .silk-result-value {
-        font-size: 2.75rem;
-        font-weight: 800;
-        margin: 0.75rem 0;
-        letter-spacing: -1px;
-    }
-
-    .silk-result-label {
-        font-size: 0.9rem;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        font-weight: 600;
-    }
-
-    /* — Page Header — */
     .silk-page-header {
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 58, 95, 0.7));
         border: 1.5px solid var(--color-border);
         border-radius: var(--radius-lg);
         padding: 2rem;
         margin-bottom: 1.5rem;
-        animation: fadeInUp 0.5s ease-out;
     }
 
-    .silk-page-header h2 {
-        margin: 0 0 0.25rem 0 !important;
-        padding: 0;
-    }
-
-    .silk-page-header p {
-        color: var(--color-text-tertiary) !important;
-        margin: 0;
-    }
-
-    /* — Badge — */
     .silk-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        letter-spacing: 0.5px;
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 600;
     }
+    .silk-badge.green { background: rgba(34, 197, 94, 0.15); color: #86efac !important; border: 1px solid rgba(34, 197, 94, 0.3); }
+    .silk-badge.amber { background: rgba(245, 158, 11, 0.15); color: #fde68a !important; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .silk-badge.blue  { background: rgba(59, 130, 246, 0.15); color: #93c5fd !important; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .silk-badge.red   { background: rgba(239, 68, 68, 0.15); color: #fca5a5 !important; border: 1px solid rgba(239, 68, 68, 0.3); }
 
-    .silk-badge.green  { background: rgba(34, 197, 94, 0.15); color: #86efac !important; border: 1px solid rgba(34, 197, 94, 0.3); }
-    .silk-badge.amber  { background: rgba(245, 158, 11, 0.15); color: #fde68a !important; border: 1px solid rgba(245, 158, 11, 0.3); }
-    .silk-badge.blue   { background: rgba(59, 130, 246, 0.15); color: #93c5fd !important; border: 1px solid rgba(59, 130, 246, 0.3); }
-    .silk-badge.red    { background: rgba(239, 68, 68, 0.15); color: #fca5a5 !important; border: 1px solid rgba(239, 68, 68, 0.3); }
-
-    /* — Footer — */
     .silk-footer {
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), var(--color-bg-deep));
         border: 1.5px solid var(--color-border);
         border-radius: var(--radius-lg);
-        padding: 2rem;
-        text-align: center;
-        margin-top: 2rem;
+        padding: 2rem; text-align: center; margin-top: 2rem;
     }
-
-    .silk-footer-brand {
-        font-size: 1.25rem;
-        font-weight: 700;
-        color: var(--color-primary-light) !important;
-        margin-bottom: 0.5rem;
-    }
-
-    .silk-footer-divider {
-        height: 1px;
-        background: linear-gradient(90deg, transparent, var(--color-border), transparent);
-        margin: 1rem auto;
-        max-width: 300px;
-    }
-
-    .silk-footer-meta {
-        font-size: 0.8rem;
-        color: var(--color-text-tertiary) !important;
-    }
-
-    /* — Step Cards — */
-    .silk-step {
-        background: linear-gradient(135deg, var(--color-bg-card), rgba(15, 30, 55, 0.7));
-        border: 1.5px solid var(--color-border);
-        border-radius: var(--radius-lg);
-        padding: 1.5rem;
-        text-align: center;
-        transition: all var(--transition-base);
-        position: relative;
-    }
-
-    .silk-step:hover {
-        transform: translateY(-4px);
-        border-color: var(--color-border-hover);
-        box-shadow: var(--shadow-card-hover);
-    }
-
-    .silk-step-number {
-        width: 36px;
-        height: 36px;
-        background: linear-gradient(135deg, var(--color-primary), var(--color-primary-hover));
-        border-radius: 50%;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 700;
-        font-size: 0.9rem;
-        color: white !important;
-        margin-bottom: 0.75rem;
-    }
-
-    /* — Info Model Card — */
-    .silk-model-info {
-        background: linear-gradient(135deg, rgba(20, 35, 65, 0.85), rgba(15, 30, 55, 0.85));
-        border: 1.5px solid var(--color-border);
-        border-left: 4px solid var(--color-primary-light);
-        border-radius: var(--radius-md);
-        padding: 1.5rem;
-        animation: fadeInUp 0.4s ease-out;
-    }
-
-    /* — Feature Grid — */
-    .silk-feature-item {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 8px 0;
-        color: var(--color-text-secondary) !important;
-        font-size: 0.95rem;
-    }
-
-    .silk-feature-check {
-        color: var(--color-green) !important;
-        font-weight: 700;
-    }
-
-    /* — Timing Badge — */
-    .silk-timing {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        background: rgba(59, 130, 246, 0.1);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-sm);
-        padding: 6px 14px;
-        font-size: 0.85rem;
-        color: var(--color-text-accent) !important;
-        font-family: var(--font-mono);
-        margin-top: 0.5rem;
-    }
-
     </style>
     """, unsafe_allow_html=True)
 
-# Call custom styling on app start
-inject_custom_css()
-
-# ==================== REUSABLE UI HELPERS ====================
-
-def render_page_header(title, subtitle, icon=""):
-    """Render a styled page header with icon, title and subtitle"""
+# Helper UI components
+def render_page_header(title: str, subtitle: str, icon: str = ""):
     st.markdown(f"""
     <div class="silk-page-header">
         <h2 style="margin:0 0 0.25rem 0 !important;">{icon} {title}</h2>
@@ -1050,1905 +248,558 @@ def render_page_header(title, subtitle, icon=""):
     """, unsafe_allow_html=True)
 
 def render_footer():
-    """Render a professional footer with branding"""
-    st.markdown("""
-    <div class="silk-footer">
-        <div class="silk-footer-brand">🧵 SilkTrace v1.0</div>
-        <p style="color:#94a3b8 !important; font-size:0.95rem;">
-            AI-Powered Smart Textile Monitoring & Prediction System
-        </p>
-        <div class="silk-footer-divider"></div>
-        <p style="color:#64748b !important; font-size:0.85rem; margin-bottom:4px;">
-            🤖 3 AI Models &nbsp;•&nbsp; ⚡ Energy Prediction &nbsp;•&nbsp; 👷 Productivity &nbsp;•&nbsp; 🧵 Defect Detection
-        </p>
-        <p style="color:#475569 !important; font-size:0.8rem; margin-bottom:4px;">
-            Built with <strong>Python</strong> • <strong>Streamlit</strong> • <strong>TensorFlow</strong> •
-            <strong>Scikit-learn</strong> • <strong>Plotly</strong>
-        </p>
-        <div class="silk-footer-divider"></div>
-        <p class="silk-footer-meta">
-            Developed by <strong style="color:#e2e8f0 !important;">Veera Dinesh D</strong> &nbsp;•&nbsp; Sri Eshwar College of Engineering
-        </p>
-        <p style="color:#475569 !important; font-size:0.75rem; margin-top:6px;">
-            © 2026 SilkTrace &nbsp;|&nbsp; All Rights Reserved
-        </p>
-        <span class="silk-badge blue" style="margin-top:8px;">v1.0 • Production</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-def render_timing_badge(elapsed_seconds):
-    """Render execution time badge"""
     st.markdown(f"""
-    <div class="silk-timing">
-        ⏱️ Completed in {elapsed_seconds:.2f}s
+    <div class="silk-footer">
+        <div style="font-size:1.25rem; font-weight:700; color:#60a5fa !important; margin-bottom:0.5rem;">
+            🧵 {APP_NAME} {APP_VERSION}
+        </div>
+        <p style="color:#94a3b8 !important; font-size:0.95rem;">
+            {APP_DESCRIPTION}
+        </p>
+        <p style="color:#64748b !important; font-size:0.85rem; margin-top:8px;">
+            🤖 3 AI Models &nbsp;•&nbsp; ⚡ Industrial Energy &nbsp;•&nbsp; 👷 Workforce Productivity &nbsp;•&nbsp; 🧵 Quality Control
+        </p>
+        <p style="color:#475569 !important; font-size:0.8rem; margin-top:4px;">
+            Engineered by <strong>{DEVELOPER_NAME}</strong> &nbsp;•&nbsp; {DEVELOPER_INSTITUTION}
+        </p>
     </div>
     """, unsafe_allow_html=True)
 
-def create_pdf_report(summary_df, predicted_class, confidence, inspection_time):
-    pdf_file = str(REPORTS_DIR / "inspection_report.pdf")
+def render_timing_badge(elapsed_seconds: float):
+    st.markdown(f"""
+    <div style="display:inline-flex; align-items:center; gap:6px; background:rgba(59, 130, 246, 0.1); border:1px solid rgba(96, 165, 250, 0.3); border-radius:8px; padding:6px 14px; font-size:0.85rem; color:#bfdbfe !important; font-family:monospace; margin-top:0.5rem; margin-bottom:1rem;">
+        ⏱️ Inference completed in {elapsed_seconds:.3f}s
+    </div>
+    """, unsafe_allow_html=True)
 
-    doc = SimpleDocTemplate(pdf_file)
-    styles = getSampleStyleSheet()
-    elements = []
+# ==================== OAUTH & SESSION GATE ====================
+# Enforce authentication before rendering app
+handle_auth_gate()
 
-    elements.append(
-        Paragraph("<b>SilkTrace</b>", styles["Title"])
-    )
-
-    elements.append(
-        Paragraph(
-            "<b>AI-Powered Smart Textile Monitoring &amp; Prediction System</b>",
-            styles["Heading2"]
-        )
-    )
-
-    elements.append(
-        Paragraph("<br/>", styles["Normal"])
-    )
-
-    elements.append(
-        Paragraph("<b>FABRIC INSPECTION REPORT</b>", styles["Title"])
-    )
-
-    elements.append(
-        Paragraph("<br/>", styles["Normal"])
-    )
-
-    elements.append(
-        Paragraph("<b>Inspection Details</b>", styles["Heading2"])
-    )
-
-    elements.append(
-        Paragraph(f"<b>Inspection Date &amp; Time:</b> {inspection_time}", styles["Normal"])
-    )
-
-    elements.append(
-        Paragraph(f"<b>Detected Defect:</b> {predicted_class}", styles["Normal"])
-    )
-
-    elements.append(
-        Paragraph(f"<b>Confidence:</b> {confidence:.2f}%", styles["Normal"])
-    )
-
-    elements.append(
-        Paragraph("<b>Model Used:</b> MobileNetV2", styles["Normal"])
-    )
-
-    elements.append(
-        Paragraph("<br/>", styles["Normal"])
-    )
-    
-    # Recommendation based on detected defect
-    if predicted_class == "Hole":
-        recommendation = "Repair or replace the damaged fabric section immediately."
-    elif predicted_class == "Horizontal":
-        recommendation = "Check loom alignment and yarn tension before production."
-    else:
-        recommendation = "Inspect warp yarns and machine calibration."
-
-    elements.append(
-        Paragraph("<b>AI Recommendation</b>", styles["Heading2"])
-    )
-
-    elements.append(
-        Paragraph(recommendation, styles["Normal"])
-    )
-
-    elements.append(
-        Paragraph("<br/>", styles["Normal"])
-    )
-    
-    if summary_df is not None and not summary_df.empty:
-        raw_data = [summary_df.columns.tolist()] + summary_df.values.tolist()
-        data = [[str(cell) for cell in row] for row in raw_data]
-    else:
-        data = [["Field", "Value"], ["Status", "No Data Available"]]
-    
-    table = Table(data)
-
-    table.setStyle(
-        TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.darkblue),
-            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-            ("GRID", (0,0), (-1,-1), 1, colors.black),
-            ("BACKGROUND", (0,1), (-1,-1), colors.beige),
-            ("ALIGN", (0,0), (-1,-1), "CENTER"),
-            ("BOTTOMPADDING", (0,0), (-1,0), 10),
-        ])
-    )
-
-    elements.append(table)
-
-    doc.build(elements)
-
-    return pdf_file
-
-# ---------------- Load Models & Datasets ----------------
-# (BASE_DIR and all model paths already defined at top of file)
-
-
-# ==================== DOWNLOAD LARGE MODELS IF MISSING ====================
-
-ENERGY_MODEL_URL = (
-    "https://github.com/veeradineshd/SilkTrace/releases/download/"
-    "v1.0.0/energy_model.pkl"
-)
-
-FABRIC_MODEL_URL = (
-    "https://github.com/veeradineshd/SilkTrace/releases/download/"
-    "v1.0.0/fabric_defect_model.keras"
-)
-
-
-def _download_file(url, destination_path):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    res = requests.get(url, headers=headers, stream=True, timeout=120)
-    res.raise_for_status()
-    with open(destination_path, "wb") as f:
-        for chunk in res.iter_content(chunk_size=65536):
-            if chunk:
-                f.write(chunk)
-
-def ensure_energy_model():
-    """Download energy model from GitHub Release if missing or incomplete."""
-    ENERGY_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not ENERGY_MODEL_PATH.exists() or ENERGY_MODEL_PATH.stat().st_size == 0:
-        st.info("⬇️ Downloading Energy Prediction model from GitHub Releases (~193 MB)...")
-        try:
-            _download_file(ENERGY_MODEL_URL, ENERGY_MODEL_PATH)
-        except Exception as e:
-            if ENERGY_MODEL_PATH.exists():
-                ENERGY_MODEL_PATH.unlink()
-            raise RuntimeError(f"Failed to download Energy model: {str(e)}")
-
-
-def ensure_fabric_model():
-    """Download fabric defect model from GitHub Release if missing or incomplete."""
-    FABRIC_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not FABRIC_MODEL_PATH.exists() or FABRIC_MODEL_PATH.stat().st_size == 0:
-        st.info("⬇️ Downloading Fabric Defect Detection model from GitHub Releases (~47 MB)...")
-        try:
-            _download_file(FABRIC_MODEL_URL, FABRIC_MODEL_PATH)
-        except Exception as e:
-            if FABRIC_MODEL_PATH.exists():
-                FABRIC_MODEL_PATH.unlink()
-            raise RuntimeError(f"Failed to download Fabric Defect model: {str(e)}")
-
-
-# (Encoder paths already defined at top of file)
-
-
-@st.cache_resource
-def load_encoders():
-    """Load only lightweight encoders at startup (< 5 KB each, negligible RAM)."""
-    for name, path in [
-        ("Date encoder", DATE_ENCODER_PATH),
-        ("Quarter encoder", QUARTER_ENCODER_PATH),
-        ("Department encoder", DEPARTMENT_ENCODER_PATH),
-        ("Day encoder", DAY_ENCODER_PATH),
-    ]:
-        if not path.exists():
-            raise FileNotFoundError(f"Required encoder file not found: {path} ({name})")
-
-    date_encoder = joblib.load(DATE_ENCODER_PATH)
-    quarter_encoder = joblib.load(QUARTER_ENCODER_PATH)
-    department_encoder = joblib.load(DEPARTMENT_ENCODER_PATH)
-    day_encoder = joblib.load(DAY_ENCODER_PATH)
-
-    return date_encoder, quarter_encoder, department_encoder, day_encoder
-
-
-@st.cache_resource
-def load_energy_model():
-    """Lazy-load energy model on demand (262 MB RAM). Only called when Energy Prediction page is opened."""
-    ensure_energy_model()
-    if not ENERGY_MODEL_PATH.exists():
-        raise FileNotFoundError(f"Energy model file not found at: {ENERGY_MODEL_PATH}")
-    return joblib.load(ENERGY_MODEL_PATH)
-
-
-@st.cache_resource
-def load_productivity_model():
-    """Lazy-load productivity model on demand (132 MB RAM). Only called when Productivity Prediction page is opened."""
-    if not PRODUCTIVITY_MODEL_PATH.exists():
-        raise FileNotFoundError(f"Productivity model file not found at: {PRODUCTIVITY_MODEL_PATH}")
-    return joblib.load(PRODUCTIVITY_MODEL_PATH)
-
-
-@st.cache_resource
-def load_fabric_model():
-    """Lazy-load TensorFlow + fabric defect model on demand (~420 MB RAM). Only called when Fabric Defect Detection page is opened."""
-    ensure_fabric_model()
-    if not FABRIC_MODEL_PATH.exists():
-        raise FileNotFoundError(f"Fabric defect model file not found at: {FABRIC_MODEL_PATH}")
-
-    try:
-        from tensorflow.keras.models import load_model  # type: ignore[import-not-found]
-    except ImportError:
-        try:
-            from keras.models import load_model  # type: ignore[import-not-found]
-        except ImportError:
-            raise RuntimeError("TensorFlow/Keras is not installed. Please install required ML dependencies.")
-
-    return load_model(FABRIC_MODEL_PATH, compile=False)
-
-
-def load_resources():
-    """Load lightweight encoders and models."""
-    encoders = load_encoders()
-    prod_model = load_productivity_model()
-    return encoders, prod_model
-
-
-def predict_productivity(data):
-    """Predict worker productivity using loaded model."""
-    model = load_productivity_model()
-    df = pd.DataFrame([data]) if isinstance(data, dict) else data
-    return model.predict(df)[0]
-
-
-def predict_energy(data):
-    """Predict energy consumption using loaded model."""
-    model = load_energy_model()
-    df = pd.DataFrame([data]) if isinstance(data, dict) else data
-    return model.predict(df)[0]
-
-
-# ---------------- Load Datasets ----------------
-
-@st.cache_data
-def load_datasets():
-    prod_path = BASE_DIR / "datasets" / "productivity" / "garments_worker_productivity.csv"
-    eng_path = BASE_DIR / "datasets" / "energy" / "Steel_industry_data.csv"
-
-    if not prod_path.exists():
-        raise FileNotFoundError(f"Productivity dataset file not found at: {prod_path}")
-    if not eng_path.exists():
-        raise FileNotFoundError(f"Energy dataset file not found at: {eng_path}")
-
-    productivity_data = pd.read_csv(prod_path)
-    energy_data = pd.read_csv(eng_path)
-
-    return productivity_data, energy_data
-
-
-# NOTE: load_datasets() is called AFTER the authentication gate below.
-
-# ==================== OAUTH AUTHENTICATION GATE ====================
-if "code" in st.query_params and not st.session_state.get("authenticated"):
-    auth_code = st.query_params["code"]
-    try:
-        if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
-            user_info = exchange_code_for_user_info(auth_code)
-            st.session_state["authenticated"] = True
-            st.session_state["user_info"] = user_info
-            st.query_params.clear()
-            st.rerun()
-        else:
-            st.warning("Google OAuth client ID/secret not configured.")
-    except Exception as e:
-        st.error(f"OAuth authentication error: {str(e)}")
-        st.query_params.clear()
-
-if not st.session_state.get("authenticated"):
-    render_login_screen()
-    st.stop()
-
-# ==================== POST-AUTH RESOURCE LOADING ====================
-# These are loaded ONCE after successful authentication.
-# @st.cache_resource / @st.cache_data ensures they only run once per session.
-
-(
-    date_encoder,
-    quarter_encoder,
-    department_encoder,
-    day_encoder,
-) = load_encoders()
-
-productivity_data, energy_data = load_datasets()
-
-# Inject CSS for authenticated view
+# Apply CSS
 inject_custom_css()
 
-# ==================== SIDEBAR NAVIGATION ====================
+# Pre-load resources safely
+try:
+    encoders = load_encoders()
+    prod_df, eng_df = load_analytics_datasets()
+except Exception as e:
+    st.error(f"Error loading system datasets or encoders: {str(e)}")
+    encoders = {}
+    prod_df = pd.DataFrame()
+    eng_df = pd.DataFrame()
 
-# SilkTrace Logo
+# ==================== SIDEBAR NAVIGATION ====================
 if LOGO_PATH.exists():
     st.sidebar.image(str(LOGO_PATH), width=180)
-elif (Path(__file__).resolve().parent / "silktrace_logo.png.png").exists():
-    st.sidebar.image(str(Path(__file__).resolve().parent / "silktrace_logo.png.png"), width=180)
 
-# User Account Info
-user_info = st.session_state.get("user_info", {})
-user_name = user_info.get("name", "SilkTrace User")
-user_email = user_info.get("email", "")
-user_pic = user_info.get("picture", "")
+# Render User Profile & Role Badge in Sidebar
+render_sidebar_user_profile()
 
 with st.sidebar:
-    st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
-    if user_pic:
-        st.image(user_pic, width=50)
-    st.markdown(f"**{user_name}**")
-    if user_email:
-        st.caption(user_email)
-    if st.button("🚪 Logout", use_container_width=True):
-        st.session_state["authenticated"] = False
-        st.session_state.pop("user_info", None)
-        st.query_params.clear()
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("---")
-
-# SilkTrace Branding
-st.sidebar.markdown("""
-<div style="text-align:center;">
-    <h2 style="color:white; margin:5px 0;">SilkTrace</h2>
-    <p style="color:#dbeafe; margin:0;">
-        AI-Powered Textile Intelligence
-    </p>
-</div>
-""", unsafe_allow_html=True)
- 
-with st.sidebar:
+    st.markdown("""
+    <div style="text-align:center; margin-bottom:10px;">
+        <h2 style="color:white; margin:0;">SilkTrace</h2>
+        <p style="color:#94a3b8; font-size:0.85rem; margin:0;">AI Textile Intelligence</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     page = option_menu(
         menu_title="📂 Navigation",
-
         options=[
             "Home",
             "Productivity Prediction",
             "Energy Prediction",
             "Fabric Defect Detection",
             "Analytics",
+            "System Health",
             "About Project"
         ],
-
         icons=[
             "house-fill",
             "people-fill",
             "lightning-charge-fill",
             "grid-3x3-gap-fill",
             "bar-chart-fill",
+            "activity",
             "info-circle-fill"
         ],
-
         menu_icon="cpu-fill",
-
         default_index=0,
-
         styles={
-            "container": {
-                "padding": "5px",
-                "background-color": "#0f172a"
-            },
-
-            "icon": {
-                "color": "#60a5fa",
-                "font-size": "18px"
-            },
-
-            "nav-link": {
-                "font-size": "16px",
-                "text-align": "left",
-                "margin": "5px",
-                "padding": "12px",
-                "border-radius": "10px",
-                "--hover-color": "#1e3a8a",
-            },
-
-            "nav-link-selected": {
-                "background-color": "#2563eb",
-                "color": "white",
-                "font-weight": "bold"
-            },
-
-            "menu-title": {
-                "color": "white",
-                "font-size": "20px",
-                "font-weight": "bold"
-            }
+            "container": {"padding": "5px", "background-color": "#0f172a"},
+            "icon": {"color": "#60a5fa", "font-size": "18px"},
+            "nav-link": {"font-size": "15px", "text-align": "left", "margin": "4px", "padding": "10px", "border-radius": "8px"},
+            "nav-link-selected": {"background-color": "#2563eb", "color": "white", "font-weight": "bold"}
         }
     )
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 📊 System Status")
-col1, col2 = st.sidebar.columns(2)
-with col1:
+s1, s2 = st.sidebar.columns(2)
+with s1:
     st.metric("Models", "3", "Active")
-with col2:
+with s2:
     st.metric("Status", "Online", "✅")
+st.sidebar.caption(f"{APP_NAME} {APP_VERSION} | Python 3.12")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("---")
+# ==================== ROUTE RENDERING ====================
 
-st.sidebar.success("🟢 All AI Models Loaded")
-
-st.sidebar.caption("""
-Version : 1.0
-
-Random Forest × 2
-
-MobileNetV2
-
-Developed by
-
-Veera Dinesh D
-""")
-
-# ==================== HELPER FUNCTION FOR METRIC CARDS ====================
-
-def display_metric_card(label, value, icon="", delta=None):
-    """Display professional metric cards"""
-    st.metric(label=f"{icon} {label}" if icon else label, value=value, delta=delta)
-
-# ==================== HOME PAGE ==================== 
- 
+# ── 1. HOME PAGE ──────────────────────────────────────────
 if page == "Home":
-
-    # — Hero Section —
     st.markdown("""
     <div class="silk-hero">
         <div class="silk-hero-title">🧵 SilkTrace</div>
-        <div class="silk-hero-subtitle">AI-Powered Smart Textile Monitoring & Prediction System</div>
-        <div class="silk-hero-status">
-            <div class="silk-hero-status-dot"></div>
-            All AI Models Online
+        <div class="silk-hero-subtitle">AI-Powered Smart Textile Manufacturing Intelligence Platform</div>
+        <div style="display:inline-flex; align-items:center; gap:8px; background:rgba(34, 197, 94, 0.12); border:1px solid rgba(34, 197, 94, 0.3); border-radius:20px; padding:6px 16px; font-size:0.85rem; color:#86efac !important; font-weight:600;">
+            <span style="width:8px; height:8px; background:#22c55e; border-radius:50%;"></span>
+            Production System Online &nbsp;•&nbsp; All AI Models Ready
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.caption(f"🕒 Dashboard Loaded : {datetime.now().strftime('%d %B %Y  |  %I:%M %p')}")
+    st.caption(f"🕒 System Timestamp: {datetime.now().strftime('%d %B %Y | %I:%M %p')}")
+    st.markdown("---")
+
+    # Overview KPI Cards
+    st.markdown("### 📈 Industrial KPI Overview")
+    kpis = compute_executive_kpis(prod_df, eng_df, load_energy_history(), load_productivity_history(), load_inspection_history())
     
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Avg Actual Productivity", f"{kpis['avg_actual_prod']:.2%}")
+    with c2:
+        st.metric("Avg Industrial Energy", f"{kpis['avg_energy_kwh']:.2f} kWh")
+    with c3:
+        st.metric("Total Predictions Executed", f"{kpis['total_predictions']:,}")
+    with c4:
+        st.metric("Defect Inspection Rate", f"{kpis['defect_rate']:.1f}%")
+
     st.markdown("---")
 
-    st.markdown("""
-    <div class="silk-model-info">
-        <p style="color:#bfdbfe !important; font-size:1rem;">
-            🚀 <strong>Transform Your Textile Manufacturing</strong> — SilkTrace integrates advanced AI to
-            improve productivity, optimize energy, and automate quality inspection.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # — KPI Cards —
-    st.markdown("### 📈 System Overview")
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        display_metric_card("AI Models", "3", "🤖")
-
-    with col2:
-        display_metric_card("Productivity Records", f"{len(productivity_data):,}", "👷")
-
-    with col3:
-        display_metric_card("Energy Records", f"{len(energy_data):,}", "⚡")
-
-    with col4:
-        display_metric_card("Fabric Classes", "3", "🧵")
-
+    # Core Module Highlights
+    st.markdown("### 🎯 Core Intelligence Modules")
     col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric("Accuracy", "95.8%")
-
-    with col2:
-        st.metric("Predictions", "50K+")
-
-    with col3:
-        st.metric("Processing Time", "<1 sec")
-
-    st.markdown("---")
-
-    # — Core Modules —
-    st.markdown("### 🎯 Core Modules")
-
-    col1, col2, col3 = st.columns(3)
-
     with col1:
         st.markdown("""
-        <div class="silk-module-card green">
-            <div class="silk-module-icon green">👷</div>
-            <h4 style="color:#86efac !important; margin-bottom:0.75rem;">Productivity Prediction</h4>
-            <p style="color:#d1fae5 !important; font-size:0.9rem;"><strong>Predict</strong> Worker Productivity</p>
-            <p style="color:#d1fae5 !important; font-size:0.9rem;"><strong>Improve</strong> Workforce Planning</p>
-            <p style="color:#6ee7b7 !important; font-size:0.85rem; margin-top:0.75rem;">
-                <span class="silk-badge green">Random Forest</span>
-            </p>
+        <div class="silk-module-card">
+            <h4 style="color:#86efac !important; margin-bottom:0.75rem;">👷 Productivity Prediction</h4>
+            <p style="font-size:0.9rem;">Predict worker productivity using Random Forest machine learning based on workforce, SMV, and department features.</p>
+            <span class="silk-badge green">Random Forest</span>
         </div>
         """, unsafe_allow_html=True)
-
-
     with col2:
         st.markdown("""
-        <div class="silk-module-card amber">
-            <div class="silk-module-icon amber">⚡</div>
-            <h4 style="color:#fde68a !important; margin-bottom:0.75rem;">Energy Prediction</h4>
-            <p style="color:#fef3c7 !important; font-size:0.9rem;"><strong>Forecast</strong> Energy Consumption</p>
-            <p style="color:#fef3c7 !important; font-size:0.9rem;"><strong>Reduce</strong> Electricity Cost</p>
-            <p style="color:#fcd34d !important; font-size:0.85rem; margin-top:0.75rem;">
-                <span class="silk-badge amber">Random Forest</span>
-            </p>
+        <div class="silk-module-card">
+            <h4 style="color:#fde68a !important; margin-bottom:0.75rem;">⚡ Energy Forecasting</h4>
+            <p style="font-size:0.9rem;">Forecast factory energy usage in kWh using reactive power, power factor, and load status parameters.</p>
+            <span class="silk-badge amber">Random Forest</span>
         </div>
         """, unsafe_allow_html=True)
-
-
     with col3:
         st.markdown("""
-        <div class="silk-module-card blue">
-            <div class="silk-module-icon blue">🧵</div>
-            <h4 style="color:#7dd3fc !important; margin-bottom:0.75rem;">Fabric Defect Detection</h4>
-            <p style="color:#bae6fd !important; font-size:0.9rem;"><strong>Detect</strong> Fabric Defects</p>
-            <p style="color:#bae6fd !important; font-size:0.9rem;"><strong>Deep Learning</strong> Inspection</p>
-            <p style="color:#38bdf8 !important; font-size:0.85rem; margin-top:0.75rem;">
-                <span class="silk-badge blue">MobileNetV2</span>
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-
-    # — System Workflow —
-    st.markdown("### 🔄 System Workflow")
-
-    workflow_col1, workflow_col2, workflow_col3 = st.columns(3)
-
-    with workflow_col1:
-        st.markdown("""
-        <div class="silk-step">
-            <div class="silk-step-number">1</div>
-            <h4 style="color:#e0f2fe !important; margin-bottom:0.5rem;">📥 Input</h4>
-            <p style="font-size:0.9rem;">• Worker Data</p>
-            <p style="font-size:0.9rem;">• Energy Parameters</p>
-            <p style="font-size:0.9rem;">• Fabric Images</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with workflow_col2:
-        st.markdown("""
-        <div class="silk-step">
-            <div class="silk-step-number">2</div>
-            <h4 style="color:#e0f2fe !important; margin-bottom:0.5rem;">🤖 AI Processing</h4>
-            <p style="font-size:0.9rem;">• Random Forest</p>
-            <p style="font-size:0.9rem;">• MobileNetV2</p>
-            <p style="font-size:0.9rem;">• Data Analysis</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with workflow_col3:
-        st.markdown("""
-        <div class="silk-step">
-            <div class="silk-step-number">3</div>
-            <h4 style="color:#e0f2fe !important; margin-bottom:0.5rem;">📊 Output</h4>
-            <p style="font-size:0.9rem;">• Predictions</p>
-            <p style="font-size:0.9rem;">• Analytics</p>
-            <p style="font-size:0.9rem;">• PDF Reports</p>
+        <div class="silk-module-card">
+            <h4 style="color:#7dd3fc !important; margin-bottom:0.75rem;">🧵 Fabric Defect Detection</h4>
+            <p style="font-size:0.9rem;">Classify fabric defects (Hole, Horizontal, Vertical) automatically using MobileNetV2 Deep Learning.</p>
+            <span class="silk-badge blue">MobileNetV2</span>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("---")
-
-    # — Technology Stack —
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### 🛠 Technology Stack")
-        st.markdown("""
-        - **Language:** Python
-        - **ML Framework:** Scikit-learn
-        - **DL Framework:** TensorFlow/Keras
-        - **Dashboard:** Streamlit
-        - **Visualization:** Plotly
-        - **Data:** Pandas & NumPy
-        """)
-    
-    st.markdown("---")
-
-    # — Project Highlights —
-    st.markdown("### ⭐ Project Highlights")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("""
-        <div class="silk-card">
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Three AI Models</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Interactive Dashboard</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> PDF Report Generation</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> CSV Export</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Real-Time Prediction</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown("""
-        <div class="silk-card">
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Analytics Dashboard</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> TensorFlow Integration</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Scikit-learn Models</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Modern UI/UX</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Responsive Layout</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-
-    # — Key Features —
-    st.markdown("### 📊 Key Features")
-
-    st.markdown("""
-    - Worker Productivity Prediction
-    - Energy Consumption Forecasting
-    - Deep Learning Fabric Inspection
-    - Interactive Analytics Dashboard
-    - PDF & CSV Report Generation
-    - Real-time Inspection History
-    """)
-
-    st.markdown("---")
-
-    # — Why SilkTrace —
-    st.markdown("## 🚀 Why SilkTrace?")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.markdown("""
-        <div class="silk-module-card blue">
-            <div class="silk-module-icon blue">⚡</div>
-            <h4 style="color:#7dd3fc !important;">Faster Decisions</h4>
-            <p style="font-size:0.9rem; margin-top:0.5rem;">AI predicts productivity and energy usage instantly.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown("""
-        <div class="silk-module-card green">
-            <div class="silk-module-icon green">📈</div>
-            <h4 style="color:#86efac !important;">Better Productivity</h4>
-            <p style="font-size:0.9rem; margin-top:0.5rem;">Monitor workers and improve manufacturing efficiency.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col3:
-        st.markdown("""
-        <div class="silk-module-card amber">
-            <div class="silk-module-icon amber">🧵</div>
-            <h4 style="color:#fde68a !important;">Better Quality</h4>
-            <p style="font-size:0.9rem; margin-top:0.5rem;">Automatically detect fabric defects using Deep Learning.</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("")
-    st.success("👉 **Get Started** | Select a module from the sidebar to begin analyzing textile data with AI.")
-
-    st.markdown("---")
-
-    # — Footer —
     render_footer()
 
-# ==================== ENERGY PREDICTION PAGE ====================
- 
-elif page == "Energy Prediction":
-
-    try:
-        energy_model = load_energy_model()
-    except Exception as e:
-        st.error(f"⚠️ Unable to load Energy Prediction model: {str(e)}")
-        st.stop()
- 
-    render_page_header(
-        "Energy Consumption Prediction",
-        "Forecast energy usage to optimize costs and efficiency",
-        "⚡"
-    )
-    
-    st.markdown("""
-    <div class="silk-model-info">
-        <h4 style="color:#fde68a !important; margin-bottom:0.75rem;">🤖 AI Model Information</h4>
-        <p style="font-size:0.9rem;"><strong>Algorithm:</strong> Random Forest Regressor</p>
-        <p style="font-size:0.9rem;"><strong>Dataset:</strong> Steel Industry Energy Consumption</p>
-        <p style="font-size:0.9rem;"><strong>Purpose:</strong> Predict factory energy usage to reduce electricity cost.</p>
-        <p style="font-size:0.9rem;"><strong>Input Features:</strong> 10</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("### ⚙️ Input Parameters")
-    
-    with col2:
-        st.info("💡 **Tip:** Enter realistic values for accurate predictions")
-
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        date = st.number_input("📅 Date", value=0)
-        lagging_reactive = st.number_input("⚡ Lagging Current Reactive Power (kVarh)", value=0.0)
-        leading_reactive = st.number_input("⚡ Leading Current Reactive Power (kVarh)", value=0.0)
-        co2 = st.number_input("💨 CO2 (tCO2)", value=0.0)
-    
-    with col2:
-        lagging_pf = st.number_input("📊 Lagging Current Power Factor", value=0.0)
-        leading_pf = st.number_input("📊 Leading Current Power Factor", value=0.0)
-        nsm = st.number_input("⏱️ NSM", value=0)
-        week_status = st.selectbox("📅 Week Status", ["Weekday", "Weekend"])
-
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        day_name = st.selectbox(
-            "📆 Day of Week",
-            [
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-                "Sunday"
-            ]
-        )
-    
-    with col2:
-        load_type = st.selectbox(
-            "📦 Load Type",
-            [
-                "Light_Load",
-                "Medium_Load",
-                "Maximum_Load"
-            ]
-        )
-    
-    with col3:
-        st.empty()
-
-    week = 0 if week_status == "Weekday" else 1
-
-    day_mapping = {
-        "Friday": 0,
-        "Monday": 1,
-        "Saturday": 2,
-        "Sunday": 3,
-        "Thursday": 4,
-        "Tuesday": 5,
-        "Wednesday": 6
-    }
- 
-    day = day_mapping[day_name]
-
-    load_mapping = {
-        "Light_Load": 0,
-        "Maximum_Load": 1,
-        "Medium_Load": 2
-    }
- 
-    load = load_mapping[load_type]
-
-    st.markdown("---")
-
-    if st.button("🚀 Predict Energy Usage", use_container_width=True):
-
-        try:
-            energy_model = load_energy_model()
-        except Exception as e:
-            st.error(f"⚠️ Unable to load Energy model: {str(e)}")
-            st.stop()
-
-        input_df = pd.DataFrame([{
-            "date": date,
-            "Lagging_Current_Reactive.Power_kVarh": lagging_reactive,
-            "Leading_Current_Reactive_Power_kVarh": leading_reactive,
-            "CO2(tCO2)": co2,
-            "Lagging_Current_Power_Factor": lagging_pf,
-            "Leading_Current_Power_Factor": leading_pf,
-            "NSM": nsm,
-            "WeekStatus": week,
-            "Day_of_week": day,
-            "Load_Type": load
-        }])
-
-        start_time = time.time()
-        with st.spinner("🤖 AI is predicting energy consumption..."):
-            prediction = energy_model.predict(input_df)
-        elapsed = time.time() - start_time
-
-        st.success("✅ Prediction Completed Successfully!")
-        render_timing_badge(elapsed)
-        st.balloons()
-
-        history_file = BASE_DIR / "history" / "energy_history.csv"
-        history_file.parent.mkdir(parents=True, exist_ok=True)
-
-        history = pd.DataFrame([{
-            "Date": date,
-            "WeekStatus": week_status,
-            "Day": day_name,
-            "Load_Type": load_type,
-            "Predicted_Energy_kWh": prediction[0]
-        }])
-
-        if history_file.exists() and history_file.stat().st_size > 0:
-            old = pd.read_csv(history_file)
-            history = pd.concat([old, history], ignore_index=True)
-
-        history.to_csv(history_file, index=False)
-        
-        # Intelligent Feedback
-        if prediction[0] > 1000:
-            st.error("⚠ High Energy Consumption")
-
-        elif prediction[0] > 600:
-            st.warning("⚠ Moderate Energy Consumption")
-
-        else:
-            st.success("✅ Efficient Energy Consumption")
-        
-        st.markdown("---")
-        
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col2:
-            st.markdown("""
-            <div class="silk-result-card">
-                <p style="color:#fde68a !important; font-size:0.85rem; text-transform:uppercase; letter-spacing:1px; font-weight:600;">⚡ Energy Prediction</p>
-                <div class="silk-result-value" style="color:#f59e0b !important;">{:.2f} kWh</div>
-                <p class="silk-result-label" style="color:#94a3b8 !important;">Predicted Energy Usage</p>
-            </div>
-            """.format(prediction[0]), unsafe_allow_html=True)
-
-        st.markdown("---")
-        render_footer()
- 
-# ==================== PRODUCTIVITY PREDICTION PAGE ====================
- 
+# ── 2. PRODUCTIVITY PREDICTION PAGE ────────────────────────
 elif page == "Productivity Prediction":
-
-    try:
-        productivity_model = load_productivity_model()
-    except Exception as e:
-        st.error(f"⚠️ Unable to load Productivity Prediction model: {str(e)}")
-        st.stop()
-    
-    render_page_header(
-        "Worker Productivity Prediction",
-        "Predict productivity to optimize workforce planning and efficiency",
-        "👷"
-    )
+    render_page_header("Worker Productivity Prediction", "AI-powered workforce planning and productivity optimization", "👷")
 
     st.markdown("""
-    <div class="silk-model-info">
-        <h4 style="color:#86efac !important; margin-bottom:0.75rem;">🤖 AI Model Information</h4>
-        <p style="font-size:0.9rem;"><strong>Algorithm:</strong> Random Forest Regressor</p>
-        <p style="font-size:0.9rem;"><strong>Dataset:</strong> Garments Worker Productivity</p>
-        <p style="font-size:0.9rem;"><strong>Purpose:</strong> Predict worker productivity before production.</p>
-        <p style="font-size:0.9rem;"><strong>Input Features:</strong> 14</p>
+    <div class="silk-card">
+        <h4 style="color:#86efac !important; margin-bottom:0.5rem;">🤖 Random Forest Productivity Model</h4>
+        <p style="font-size:0.9rem;">Predict garment worker actual productivity from workforce allocation, department, targeted productivity, SMV, overtime, and incentive parameters.</p>
     </div>
     """, unsafe_allow_html=True)
-
     st.markdown("---")
 
-    col1, col2 = st.columns([2, 1])
+    date_enc = encoders.get("date")
+    quarter_enc = encoders.get("quarter")
+    dept_enc = encoders.get("department")
+    day_enc = encoders.get("day")
+
+    if not all([date_enc, quarter_enc, dept_enc, day_enc]):
+        st.error("Categorical encoders not initialized. Please verify model directory.")
+        st.stop()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        date_val = st.selectbox("📅 Select Date", date_enc.classes_)
+        quarter_val = st.selectbox("📊 Select Quarter", quarter_enc.classes_)
+        dept_val = st.selectbox("🏭 Department", dept_enc.classes_)
+        day_val = st.selectbox("📆 Day of Week", day_enc.classes_)
+        team_num = st.number_input("👥 Team Number", min_value=1, max_value=30, value=1)
+        num_workers = st.number_input("👷 Number of Workers", min_value=1, max_value=200, value=50)
+        target_prod = st.number_input("🎯 Targeted Productivity", min_value=0.0, max_value=1.0, value=0.80, step=0.05)
     
-    with col1:
-        st.markdown("### 📋 Worker & Production Data")
-    
-    with col2:
-        st.info("💡 **Tip:** Provide accurate workforce metrics for precise predictions")
-
-    # Categorical inputs
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        date = st.selectbox(
-            "📅 Select Date",
-            date_encoder.classes_
-        )
-
-    with col2:
-        quarter = st.selectbox(
-            "📊 Select Quarter",
-            quarter_encoder.classes_
-        )
-
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        department = st.selectbox(
-            "🏭 Select Department",
-            department_encoder.classes_
-        )
-
-    with col2:
-        day = st.selectbox(
-            "📆 Select Day",
-            day_encoder.classes_
-        )
-
-    st.markdown("### 👥 Workforce Information")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        team = st.number_input("👥 Team Number", min_value=1, value=1)
-
-    with col2:
-        no_of_workers = st.number_input("👷 Number of Workers", min_value=0, value=50)
-
-    with col3:
-        targeted_productivity = st.number_input(
-            "🎯 Targeted Productivity",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.8
-        )
-
-    st.markdown("### ⚙️ Production Parameters")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        smv = st.number_input("⏱️ SMV (Standard Minute Value)", min_value=0.0, value=20.0)
-        wip = st.number_input("📦 WIP (Work In Progress)", min_value=0.0, value=100.0)
-        over_time = st.number_input("⏰ Over Time (hours)", min_value=0, value=0)
-
-    with col2:
-        incentive = st.number_input("💰 Incentive", min_value=0, value=50)
-        idle_time = st.number_input("⏸️ Idle Time", min_value=0.0, value=0.0)
-        idle_men = st.number_input("👤 Idle Men", min_value=0, value=0)
-
-    with col3:
-        no_of_style_change = st.number_input("🔄 Number of Style Changes", min_value=0, value=0)
+    with c2:
+        smv_val = st.number_input("⏱️ SMV (Standard Minute Value)", min_value=0.0, max_value=100.0, value=20.0, step=0.5)
+        wip_val = st.number_input("📦 WIP (Work In Progress)", min_value=0.0, max_value=10000.0, value=100.0, step=10.0)
+        overtime_val = st.number_input("⏰ Overtime (minutes)", min_value=0, max_value=50000, value=0, step=100)
+        incentive_val = st.number_input("💰 Incentive Amount", min_value=0, max_value=5000, value=50, step=10)
+        idle_time_val = st.number_input("⏸️ Idle Time", min_value=0.0, max_value=500.0, value=0.0, step=0.5)
+        idle_men_val = st.number_input("👤 Idle Workers", min_value=0, max_value=100, value=0, step=1)
+        style_changes = st.number_input("🔄 Style Changes", min_value=0, max_value=10, value=0, step=1)
 
     st.markdown("---")
 
     if st.button("🚀 Predict Productivity", use_container_width=True):
+        input_data = {
+            "date": date_enc.transform([date_val])[0],
+            "quarter": quarter_enc.transform([quarter_val])[0],
+            "department": dept_enc.transform([dept_val])[0],
+            "day": day_enc.transform([day_val])[0],
+            "team": team_num,
+            "targeted_productivity": target_prod,
+            "smv": smv_val,
+            "wip": wip_val,
+            "over_time": overtime_val,
+            "incentive": incentive_val,
+            "idle_time": idle_time_val,
+            "idle_men": idle_men_val,
+            "no_of_style_change": style_changes,
+            "no_of_workers": num_workers
+        }
 
-        try:
-            productivity_model = load_productivity_model()
-        except Exception as e:
-            st.error(f"⚠️ Unable to load Productivity model: {str(e)}")
-            st.stop()
-
-        input_data = pd.DataFrame([{
-
-            "date": date_encoder.transform([date])[0],
-            "quarter": quarter_encoder.transform([quarter])[0],
-            "department": department_encoder.transform([department])[0],
-            "day": day_encoder.transform([day])[0],
-
-            "team": team,
-            "targeted_productivity": targeted_productivity,
-            "smv": smv,
-            "wip": wip,
-            "over_time": over_time,
-            "incentive": incentive,
-            "idle_time": idle_time,
-            "idle_men": idle_men,
-            "no_of_style_change": no_of_style_change,
-            "no_of_workers": no_of_workers
-
-        }])
-
-        start_time = time.time()
-        with st.spinner("🤖 AI is predicting worker productivity..."):
-            prediction = productivity_model.predict(input_data)
-        elapsed = time.time() - start_time
+        with st.spinner("🤖 Executing Random Forest Productivity Inference..."):
+            pred, elapsed, status = predict_productivity(input_data)
 
         st.success("✅ Prediction Completed Successfully!")
         render_timing_badge(elapsed)
-        st.balloons()
-        
-        history_file = BASE_DIR / "history" / "productivity_history.csv"
-        history_file.parent.mkdir(parents=True, exist_ok=True)
 
-        history = pd.DataFrame([{
-            "Date": date,
-            "Department": department,
-            "Day": day,
-            "Team": team,
-            "Predicted_Productivity": prediction[0]
-        }])
+        # Record in history
+        user_email = st.session_state.get("user_info", {}).get("email", "System")
+        log_productivity_prediction(date_val, dept_val, day_val, team_num, pred, user_email)
 
-        if history_file.exists() and history_file.stat().st_size > 0:
-            old = pd.read_csv(history_file)
-            history = pd.concat([old, history], ignore_index=True)
+        # Display Result Card
+        is_on_target = pred >= target_prod
+        badge_class = "green" if is_on_target else "amber"
+        badge_text = "✅ On Target" if is_on_target else "⚠️ Below Target"
 
-        history.to_csv(history_file, index=False)
-        
-        # Intelligent Feedback
-        if prediction[0] >= 0.80:
-            st.success("✅ Excellent Productivity")
-
-        elif prediction[0] >= 0.60:
-            st.warning("⚠ Average Productivity")
-
-        else:
-            st.error("❌ Low Productivity")
-        
-        st.markdown("---")
-        
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col2:
-            if prediction[0] >= targeted_productivity:
-                status_color = "#22c55e"
-                status_icon = "✅"
-                status = "On Target"
-            else:
-                status_color = "#f59e0b"
-                status_icon = "⚠️"
-                status = "Below Target"
-
-            # Determine badge class
-            badge_class = "green" if prediction[0] >= targeted_productivity else "amber"
-
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
             st.markdown(f"""
             <div class="silk-result-card">
-                <p style="color:#86efac !important; font-size:0.85rem; text-transform:uppercase; letter-spacing:1px; font-weight:600;">👷 Productivity Result</p>
-                <div class="silk-result-value" style="color:{status_color} !important;">{prediction[0]:.2f}</div>
-                <p class="silk-result-label" style="color:#94a3b8 !important;">Actual Productivity</p>
-                <div style="margin-top:0.75rem;">
-                    <span class="silk-badge {badge_class}">{status_icon} {status}</span>
-                </div>
+                <p style="color:#86efac !important; font-weight:600; text-transform:uppercase;">👷 Worker Productivity Prediction</p>
+                <div class="silk-result-value" style="color:{'#22c55e' if is_on_target else '#f59e0b'} !important;">{pred:.4f} ({pred:.1%})</div>
+                <p style="color:#94a3b8 !important;">Target Productivity: <strong>{target_prod:.1%}</strong></p>
+                <span class="silk-badge {badge_class}">{badge_text}</span>
             </div>
             """, unsafe_allow_html=True)
 
-        st.markdown("---")
-        render_footer()
- 
-# ==================== FABRIC DEFECT DETECTION PAGE ====================
-
-elif page == "Fabric Defect Detection":
-
-    try:
-        fabric_model = load_fabric_model()
-    except Exception as e:
-        st.error(f"⚠️ Unable to load Fabric Defect Detection model: {str(e)}")
-        st.info("Please ensure TensorFlow/Keras and required model files are available.")
-        st.stop()
-    
-    render_page_header(
-        "Fabric Defect Detection",
-        "AI-Powered Deep Learning for Automated Quality Inspection",
-        "🧵"
-    )
-
-    st.markdown("""
-    <div class="silk-model-info">
-        <h4 style="color:#7dd3fc !important; margin-bottom:0.75rem;">🤖 Deep Learning Model</h4>
-        <p style="font-size:0.9rem;"><strong>Architecture:</strong> MobileNetV2</p>
-        <p style="font-size:0.9rem;"><strong>Classes:</strong> Hole • Horizontal • Vertical</p>
-        <p style="font-size:0.9rem;"><strong>Input Size:</strong> 224 × 224 pixels</p>
-    </div>
-    """, unsafe_allow_html=True)
-
     st.markdown("---")
-
-    with st.expander("ℹ️ Model Information", expanded=False):
-
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            **Model Architecture:** MobileNetV2
-            
-            **Framework:** TensorFlow / Keras
-            
-            **Input Size:** 224 × 224 pixels
-            
-            **Processing:** Real-time inference
-            """)
-        
-        with col2:
-            st.markdown("""
-            **Defect Classes:**
-            - 🕳️ **Hole** - Fabric damage or punctures
-            - ↔️ **Horizontal** - Horizontal line defects
-            - ↕️ **Vertical** - Vertical line defects
-            
-            **Accuracy:** Production-grade AI model
-            """)
-
-    st.markdown("### 📸 Upload Fabric Image")
-
-    uploaded_file = st.file_uploader(
-        "Choose a fabric image for inspection",
-        type=["jpg", "jpeg", "png"],
-        help="Supported formats: JPG, JPEG, PNG. Recommended size: 224x224 pixels"
-    )
-
-    if uploaded_file is not None:
-
-        image = Image.open(uploaded_file).convert("RGB")
-
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.image(
-                image,
-                caption="Uploaded Fabric Image",
-                use_container_width=True
-            )
-        
-        with col2:
-            st.markdown("### 🖼️ Image Details")
-            st.metric("Width", f"{image.width}px")
-            st.metric("Height", f"{image.height}px")
-            st.metric("Format", image.mode)
-
-        st.divider()
-
-        # Resize and preprocess
-        img = image.resize((224, 224))
-        img = np.array(img, dtype=np.float32)
-        img = img / 255.0
-        img = np.expand_dims(img, axis=0)
-
-        # Predict
-        start_time = time.time()
-        with st.spinner("🤖 AI is analyzing the fabric image..."):
-            prediction = fabric_model.predict(img, verbose=0)
-        elapsed = time.time() - start_time
-
-        class_names = [
-            "Hole",
-            "Horizontal",
-            "Vertical"
-        ]
-
-        predicted_class = class_names[np.argmax(prediction)]
-        confidence = float(np.max(prediction) * 100)
-        probabilities = prediction[0] * 100
-        
-        # ==================== PREDICTION RESULTS ====================
-        
-        st.markdown("### 🤖 AI Prediction Result")
-        render_timing_badge(elapsed)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if confidence >= 90:
-                st.success("✅ High Confidence Detection")
-            elif confidence >= 70:
-                st.info("ℹ️ Moderate Confidence Detection")
-            else:
-                st.warning("⚠️ Low Confidence - Manual Review Recommended")
-
-        with col2:
-            st.metric("Detected Defect", predicted_class)
-
-        with col3:
-            st.metric("Confidence Score", f"{confidence:.2f}%")
-
-        st.markdown("---")
-
-        # Confidence indicator
-        st.markdown("### 📊 Confidence Analysis")
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.progress(float(confidence) / 100)
-        
-        with col2:
-            if confidence >= 80:
-                st.success("✅ Reliable")
-            elif confidence >= 60:
-                st.warning("⚠️ Moderate")
-            else:
-                st.error("❌ Low")
-
-        st.markdown("---")
-        
-        # Probability distribution
-        st.markdown("### 📈 Defect Type Probabilities")
-
-        probability_df = pd.DataFrame({
-            "Defect Type": class_names,
-            "Probability (%)": probabilities.round(2)
-        })
-
-        st.dataframe(probability_df, use_container_width=True, hide_index=True)
-
-        # Chart
-        chart_df = pd.DataFrame({
-            "Defect Type": class_names,
-            "Probability (%)": probabilities
-        })
-
-        fig = px.bar(
-            chart_df,
-            x="Defect Type",
-            y="Probability (%)",
-            text="Probability (%)",
-            color="Defect Type",
-            title="Prediction Confidence Distribution",
-            color_discrete_sequence=["#ef4444", "#f59e0b", "#0ea5e9"]
-        )
-        
-        fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
-        fig.update_layout(
-            xaxis_title="Defect Type",
-            yaxis_title="Confidence (%)",
-            yaxis=dict(range=[0, 100]),
-            height=400,
-            showlegend=False,
-            plot_bgcolor="rgba(15, 23, 42, 0.5)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e2e8f0")
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.divider()
-        
-        # ==================== INSPECTION SUMMARY ====================
-        
-        st.markdown("### 📋 Inspection Summary")
-
-        inspection_time = datetime.now().strftime("%d-%m-%Y %I:%M %p")
-
-        summary = pd.DataFrame({
-
-            "Field":[
-                "Detected Defect",
-                "Confidence Level",
-                "Inspection Time",
-                "Model Used",
-                "Image Dimensions"
-            ],
-
-            "Value":[
-                predicted_class,
-                f"{confidence:.2f}%",
-                inspection_time,
-                "MobileNetV2",
-                f"{image.width} × {image.height}"
-            ]
-
-        })
-
-        st.dataframe(summary, use_container_width=True, hide_index=True)
-        
-        st.divider()
-
-        # ==================== EXPORT OPTIONS ====================
-        
-        st.markdown("### 📥 Export & Download")
-        
-        col1, col2 = st.columns(2)
-
-        with col1:
-            report_df = summary.copy()
-            pdf_file = create_pdf_report(
-                report_df,
-                predicted_class,
-                confidence,
-                inspection_time
-            )
-
-            with open(pdf_file, "rb") as pdf:
-                st.download_button(
-                    label="📄 Download Inspection Report (PDF)",
-                    data=pdf,
-                    file_name="SilkTrace_Inspection_Report.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-            )
-
-        with col2:
-            csv = summary.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="📊 Download Report (CSV)",
-                data=csv,
-                file_name="inspection_report.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        
-        # ==================== HISTORY MANAGEMENT ====================
-        
-        st.divider()
-        st.markdown("### 📂 Inspection History")
-
-        history = pd.DataFrame({
-            "Date": [inspection_time],
-            "Detected Defect": [predicted_class],
-            "Confidence (%)": [round(confidence, 2)]
-        })
-
-        history_file = BASE_DIR / "history" / "inspection_history.csv"
-        history_file.parent.mkdir(parents=True, exist_ok=True)
-
-        if history_file.exists() and history_file.stat().st_size > 0:
-            old_history = pd.read_csv(history_file)
-            history = pd.concat([old_history, history], ignore_index=True)
-
-        history.to_csv(history_file, index=False)
-        
-        history_df = pd.read_csv(history_file)
-        
-        st.dataframe(
-            history_df.sort_values("Date", ascending=False),
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        # ==================== RECOMMENDATIONS ====================
-        
-        st.divider()
-        st.markdown("### 💡 AI Recommendation")
-        
-        if predicted_class == "Hole":
-            st.warning("🔴 **Action Required:** Repair or replace the damaged fabric section before proceeding to production. This defect affects product quality significantly.")
-
-        elif predicted_class == "Horizontal":
-            st.info("🟠 **Maintenance Alert:** Check loom alignment and yarn tension settings. Horizontal defects indicate mechanical alignment issues.")
-
-        elif predicted_class == "Vertical":
-            st.info("🟠 **Inspection Needed:** Inspect warp yarns and verify machine calibration. Vertical defects suggest warp-related issues.")
-
-        st.markdown("---")
-        render_footer()
-
-# ==================== ANALYTICS DASHBOARD ====================
- 
-elif page == "Analytics":
-
-    render_page_header(
-        "SilkTrace Analytics Dashboard",
-        "Real-time insights for textile manufacturing optimization",
-        "📊"
-    )
-
-    st.markdown("""
-    <div class="silk-model-info">
-        <h4 style="color:#bfdbfe !important; margin-bottom:0.75rem;">📊 Analytics Dashboard</h4>
-        <p style="font-size:0.9rem;">This dashboard provides real-time insights into:</p>
-        <p style="font-size:0.9rem;">• Worker Productivity Prediction &nbsp;• Energy Consumption Prediction</p>
-        <p style="font-size:0.9rem;">• Historical Prediction Records &nbsp;• Manufacturing Performance &nbsp;• AI-driven Decision Support</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-
-    energy_history_file = BASE_DIR / "history" / "energy_history.csv"
-    productivity_history_file = BASE_DIR / "history" / "productivity_history.csv"
-    
-    if not energy_history_file.exists() or energy_history_file.stat().st_size == 0:
-        energy_history = pd.DataFrame(columns=["Date", "WeekStatus", "Day", "Load_Type", "Predicted_Energy_kWh"])
-    else:
-        energy_history = pd.read_csv(energy_history_file)
-
-    if not productivity_history_file.exists() or productivity_history_file.stat().st_size == 0:
-        productivity_history = pd.DataFrame(columns=["Date", "Department", "Day", "Team", "Predicted_Productivity"])
-    else:
-        productivity_history = pd.read_csv(productivity_history_file)
-    
-    # ================= KPI OVERVIEW =================
-
-    st.markdown("### 📈 System Metrics")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric(
-            "⚡ Energy Predictions",
-            len(energy_history)
-        )
-
-    with col2:
-        st.metric(
-            "👷 Productivity Predictions",
-            len(productivity_history)
-        )
-
-    with col3:
-        avg_energy = round(energy_history["Predicted_Energy_kWh"].mean(), 2) if not energy_history.empty and "Predicted_Energy_kWh" in energy_history.columns and not energy_history["Predicted_Energy_kWh"].dropna().empty else 0.0
-        st.metric(
-            "⚡ Average Energy",
-            avg_energy
-        )
-
-    with col4:
-        avg_productivity = round(productivity_history["Predicted_Productivity"].mean(), 2) if not productivity_history.empty and "Predicted_Productivity" in productivity_history.columns and not productivity_history["Predicted_Productivity"].dropna().empty else 0.0
-        st.metric(
-            "👷 Average Productivity",
-            avg_productivity
-        )
-
-    st.markdown("---")
-
-    st.markdown("### ⚡ Energy Consumption Trend")
-    if not energy_history.empty and "Date" in energy_history.columns and "Predicted_Energy_kWh" in energy_history.columns:
-        energy_chart = energy_history.set_index("Date")
-        st.line_chart(energy_chart["Predicted_Energy_kWh"])
-    else:
-        st.info("No energy prediction history available yet.")
-
-    st.markdown("### 👷 Productivity Trend")
-    if not productivity_history.empty and "Date" in productivity_history.columns and "Predicted_Productivity" in productivity_history.columns:
-        productivity_chart = productivity_history.set_index("Date")
-        st.line_chart(productivity_chart["Predicted_Productivity"])
-    else:
-        st.info("No productivity prediction history available yet.")
-    
-    # ================= PREDICTION HISTORY =================
-
-    st.markdown("### 📋 Recent Prediction History")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### ⚡ Energy Prediction History")
-        st.dataframe(energy_history.tail(10), use_container_width=True)
-
-    with col2:
-        st.subheader("👷 Productivity Prediction History")
-        st.dataframe(productivity_history.tail(10), use_container_width=True)
-
-    st.markdown("---")
-    
-    st.subheader("⬇ Download Prediction History")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if energy_history_file.exists() and energy_history_file.stat().st_size > 0:
-            with open(energy_history_file, "rb") as file:
-                st.download_button(
-                    label="⬇ Download Energy History",
-                    data=file,
-                    file_name="energy_history.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-        else:
-            st.download_button(
-                label="⬇ Download Energy History",
-                data=energy_history.to_csv(index=False).encode("utf-8"),
-                file_name="energy_history.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-
-    with col2:
-        if productivity_history_file.exists() and productivity_history_file.stat().st_size > 0:
-            with open(productivity_history_file, "rb") as file:
-                st.download_button(
-                    label="⬇ Download Productivity History",
-                    data=file,
-                    file_name="productivity_history.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-        else:
-            st.download_button(
-                label="⬇ Download Productivity History",
-                data=productivity_history.to_csv(index=False).encode("utf-8"),
-                file_name="productivity_history.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-
-    st.markdown("---")
-
-    # ================= PRODUCTIVITY ANALYSIS =================
-
-    st.markdown("### 👷 Productivity Analysis")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        dept_productivity = productivity_data.groupby("department")["actual_productivity"].mean().reset_index()
-        
-        fig = px.bar(
-            dept_productivity,
-            x="department",
-            y="actual_productivity",
-            title="Average Productivity by Department",
-            labels={"actual_productivity": "Avg Productivity", "department": "Department"},
-            color="actual_productivity",
-            color_continuous_scale="Blues"
-        )
-        fig.update_layout(
-            height=400,
-            showlegend=False,
-            plot_bgcolor="rgba(15, 23, 42, 0.5)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e2e8f0")
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col2:
-        quarter_productivity = productivity_data.groupby("quarter")["actual_productivity"].mean().reset_index()
-        
-        fig = px.line(
-            quarter_productivity,
-            x="quarter",
-            y="actual_productivity",
-            title="Productivity Trend by Quarter",
-            labels={"actual_productivity": "Avg Productivity", "quarter": "Quarter"},
-            markers=True,
-            line_shape="spline"
-        )
-        fig.update_layout(
-            height=400,
-            plot_bgcolor="rgba(15, 23, 42, 0.5)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e2e8f0"),
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("---")
-
-    # ================= ENERGY ANALYSIS =================
-
-    st.markdown("### ⚡ Energy Consumption Analysis")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        energy_stats = energy_data.groupby("Load_Type")["Usage_kWh"].sum().reset_index()
-
-        fig = px.pie(
-            energy_stats,
-            names="Load_Type",
-            values="Usage_kWh",
-            title="Energy Usage by Load Type",
-            color_discrete_sequence=["#ef4444", "#f59e0b", "#0ea5e9"]
-        )
-        fig.update_layout(
-            height=400,
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e2e8f0")
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col2:
-        load_counts = energy_data["Load_Type"].value_counts().reset_index()
-        load_counts.columns = ["Load Type","Count"]
-
-        fig = px.bar(
-            load_counts,
-            x="Load Type",
-            y="Count",
-            title="Load Type Distribution",
-            color="Load Type",
-            color_discrete_sequence=["#ef4444", "#f59e0b", "#0ea5e9"]
-        )
-        fig.update_layout(
-            height=400,
-            showlegend=False,
-            plot_bgcolor="rgba(15, 23, 42, 0.5)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="#e2e8f0")
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("---")
-
-    st.markdown("### 📊 Prediction Distribution")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if not energy_history.empty and "Predicted_Energy_kWh" in energy_history.columns:
-            fig = px.histogram(
-                energy_history,
-                x="Predicted_Energy_kWh",
-                nbins=10,
-                title="Energy Prediction Distribution",
-                color_discrete_sequence=["#f59e0b"]
-            )
-            fig.update_layout(
-                plot_bgcolor="rgba(15, 23, 42, 0.5)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#e2e8f0")
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No energy distribution data available yet.")
-
-    with col2:
-        if not productivity_history.empty and "Predicted_Productivity" in productivity_history.columns:
-            fig = px.histogram(
-                productivity_history,
-                x="Predicted_Productivity",
-                nbins=10,
-                title="Productivity Prediction Distribution",
-                color_discrete_sequence=["#22c55e"]
-            )
-            fig.update_layout(
-                plot_bgcolor="rgba(15, 23, 42, 0.5)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#e2e8f0")
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No productivity distribution data available yet.")
-
-    st.markdown("---")
-    
-    # ================= SUMMARY STATISTICS =================
-
-    st.markdown("### 📊 Summary Statistics")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### 👷 Productivity Dataset")
-        st.dataframe(
-            productivity_data.describe(),
-            use_container_width=True
-        )
-
-    with col2:
-        st.markdown("#### ⚡ Energy Dataset")
-        st.dataframe(
-            energy_data.describe(),
-            use_container_width=True
-        )
-
-    st.markdown("---")
-
-    st.success(
-        "📊 **Dashboard Insights:** SilkTrace Analytics provides comprehensive AI-driven intelligence for productivity improvement, energy optimization, and manufacturing excellence."
-    )
-    
-    st.markdown("---")
+    render_footer()
+
+# ── 3. ENERGY PREDICTION PAGE ─────────────────────────────
+elif page == "Energy Prediction":
+    render_page_header("Industrial Energy Consumption Prediction", "Forecast electrical usage to reduce energy overhead", "⚡")
 
     st.markdown("""
     <div class="silk-card">
-        <h4 style="color:#e0f2fe !important; margin-bottom:0.75rem;">📌 Dashboard Summary</h4>
-        <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Historical Predictions</div>
-        <div class="silk-feature-item"><span class="silk-feature-check">✅</span> AI Performance Monitoring</div>
-        <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Productivity Analysis</div>
-        <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Energy Consumption Analysis</div>
-        <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Downloadable Reports</div>
-        <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Business Intelligence Dashboard</div>
+        <h4 style="color:#fde68a !important; margin-bottom:0.5rem;">🤖 Random Forest Energy Model</h4>
+        <p style="font-size:0.9rem;">Predict factory energy usage (kWh) based on electrical reactive power, power factor, CO2 emissions, and load type.</p>
     </div>
     """, unsafe_allow_html=True)
+    st.markdown("---")
 
-    st.markdown("")
+    c1, c2 = st.columns(2)
+    with c1:
+        date_num = st.number_input("📅 Date Index", min_value=0, value=1)
+        lagging_react = st.number_input("⚡ Lagging Reactive Power (kVarh)", min_value=0.0, value=4.5, step=0.5)
+        leading_react = st.number_input("⚡ Leading Reactive Power (kVarh)", min_value=0.0, value=0.0, step=0.5)
+        co2_val = st.number_input("💨 CO2 Emissions (tCO2)", min_value=0.0, value=0.0, step=0.01)
+        lagging_pf = st.number_input("📊 Lagging Power Factor", min_value=0.0, max_value=100.0, value=85.0, step=1.0)
+    with c2:
+        leading_pf = st.number_input("📊 Leading Power Factor", min_value=0.0, max_value=100.0, value=100.0, step=1.0)
+        nsm_val = st.number_input("⏱️ NSM (Number of Seconds from Midnight)", min_value=0, max_value=86400, value=30000, step=900)
+        week_status_str = st.selectbox("📅 Weekday Status", ["Weekday", "Weekend"])
+        day_name = st.selectbox("📆 Day of Week", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+        load_type_str = st.selectbox("📦 Load Type", ["Light_Load", "Medium_Load", "Maximum_Load"])
+
+    week_status_enc = 0 if week_status_str == "Weekday" else 1
+    day_map = {"Friday": 0, "Monday": 1, "Saturday": 2, "Sunday": 3, "Thursday": 4, "Tuesday": 5, "Wednesday": 6}
+    load_map = {"Light_Load": 0, "Maximum_Load": 1, "Medium_Load": 2}
+
+    st.markdown("---")
+
+    if st.button("🚀 Predict Energy Consumption", use_container_width=True):
+        input_data = {
+            "date": date_num,
+            "Lagging_Current_Reactive.Power_kVarh": lagging_react,
+            "Leading_Current_Reactive_Power_kVarh": leading_react,
+            "CO2(tCO2)": co2_val,
+            "Lagging_Current_Power_Factor": lagging_pf,
+            "Leading_Current_Power_Factor": leading_pf,
+            "NSM": nsm_val,
+            "WeekStatus": week_status_enc,
+            "Day_of_week": day_map[day_name],
+            "Load_Type": load_map[load_type_str]
+        }
+
+        with st.spinner("🤖 Executing Random Forest Energy Inference..."):
+            pred, elapsed, status = predict_energy(input_data)
+
+        st.success("✅ Prediction Completed Successfully!")
+        render_timing_badge(elapsed)
+
+        # Log history
+        user_email = st.session_state.get("user_info", {}).get("email", "System")
+        log_energy_prediction(date_num, week_status_str, day_name, load_type_str, pred, user_email)
+
+        # Result card
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            st.markdown(f"""
+            <div class="silk-result-card">
+                <p style="color:#fde68a !important; font-weight:600; text-transform:uppercase;">⚡ Predicted Energy Usage</p>
+                <div class="silk-result-value" style="color:#f59e0b !important;">{pred:.2f} kWh</div>
+                <p style="color:#94a3b8 !important;">Status: <strong>{status}</strong></p>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("---")
     render_footer()
-    
-# ==================== ABOUT PAGE ====================
- 
-elif page == "About Project":
 
-    render_page_header(
-        "About SilkTrace",
-        "AI-Powered Smart Textile Monitoring & Prediction System",
-        "ℹ️"
-    )
+# ── 4. FABRIC DEFECT DETECTION PAGE ───────────────────────
+elif page == "Fabric Defect Detection":
+    render_page_header("Fabric Defect Detection & Quality Control", "Automated MobileNetV2 Deep Learning fabric inspection", "🧵")
 
     st.markdown("""
+    <div class="silk-card">
+        <h4 style="color:#7dd3fc !important; margin-bottom:0.5rem;">🤖 MobileNetV2 Deep Learning Classifier</h4>
+        <p style="font-size:0.9rem;">Upload a fabric sample photo to automatically identify structural fabric defects (Hole, Horizontal, Vertical).</p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("---")
+
+    uploaded_file = st.file_uploader("Choose a fabric image for inspection", type=["jpg", "jpeg", "png"])
+
+    if uploaded_file is not None:
+        try:
+            image = Image.open(uploaded_file).convert("RGB")
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                st.image(image, caption="Uploaded Fabric Sample", use_container_width=True)
+            with c2:
+                st.markdown("### 🖼️ Image Details")
+                st.metric("Width", f"{image.width} px")
+                st.metric("Height", f"{image.height} px")
+                st.metric("Color Space", image.mode)
+
+            st.markdown("---")
+
+            with st.spinner("🤖 MobileNetV2 Neural Network Analyzing Fabric Image..."):
+                pred_class, confidence, probs, elapsed = predict_fabric_defect(image)
+
+            st.success("✅ Quality Inspection Complete!")
+            render_timing_badge(elapsed)
+
+            user_email = st.session_state.get("user_info", {}).get("email", "System")
+            log_fabric_inspection(pred_class, confidence, user_email)
+
+            # Results Cards
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("Detected Fabric Status", pred_class)
+            with c2:
+                st.metric("Confidence Score", f"{confidence:.2f}%")
+            with c3:
+                conf_badge = "green" if confidence >= 85 else ("amber" if confidence >= 60 else "red")
+                st.markdown(f"<div style='padding-top:15px;'><span class='silk-badge {conf_badge}'>Confidence Rating: {confidence:.1f}%</span></div>", unsafe_allow_html=True)
+
+            st.markdown("---")
+            st.markdown("### 📊 Defect Class Probabilities")
+            prob_df = pd.DataFrame({"Defect Class": ["Hole", "Horizontal", "Vertical"], "Probability (%)": probs})
+            
+            fig = px.bar(
+                prob_df,
+                x="Defect Class",
+                y="Probability (%)",
+                text="Probability (%)",
+                color="Defect Class",
+                title="MobileNetV2 Output Probability Distribution",
+                color_discrete_sequence=["#ef4444", "#f59e0b", "#0ea5e9"]
+            )
+            fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
+            fig.update_layout(height=350, plot_bgcolor="rgba(15, 23, 42, 0.5)", paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#e2e8f0"))
+            st.plotly_chart(fig, use_container_width=True)
+
+            # AI Recommendations
+            st.markdown("### 💡 AI Operational Recommendation")
+            recommendation_msg = FABRIC_RECOMMENDATIONS.get(pred_class, "Inspect warp/weft yarns and perform standard loom calibration.")
+            st.info(recommendation_msg)
+
+            st.markdown("---")
+            st.markdown("### 📥 Export Reports & Summaries")
+            
+            inspection_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            user_name_str = st.session_state.get("user_info", {}).get("name", "SilkTrace Operator")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                summary_table_df = pd.DataFrame({
+                    "Attribute": ["Detected Condition", "Confidence Level", "Inspection Time", "Model Architecture", "Dimensions"],
+                    "Value": [pred_class, f"{confidence:.2f}%", inspection_time_str, "MobileNetV2 Deep Learning", f"{image.width}x{image.height}"]
+                })
+                
+                pdf_path = create_pdf_report(
+                    summary_table_df,
+                    pred_class,
+                    confidence,
+                    inspection_time_str,
+                    user_name=user_name_str,
+                    user_email=user_email,
+                    recommendation=recommendation_msg
+                )
+
+                with open(pdf_path, "rb") as pdf_file:
+                    st.download_button(
+                        label="📄 Download Inspection Report (PDF)",
+                        data=pdf_file,
+                        file_name="SilkTrace_Inspection_Report.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+
+            with c2:
+                csv_bytes = summary_table_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="📊 Download Summary (CSV)",
+                    data=csv_bytes,
+                    file_name="inspection_summary.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+
+        except Exception as e:
+            st.error(f"Error executing fabric defect inspection: {str(e)}")
+
+    st.markdown("---")
+    render_footer()
+
+# ── 5. ANALYTICS & EXECUTIVE DASHBOARD PAGE ───────────────
+elif page == "Analytics":
+    render_page_header("SilkTrace Executive Analytics Dashboard", "Real-time industrial manufacturing intelligence & alert center", "📊")
+
+    # Operational Alert Center
+    alerts = generate_operational_alerts(prod_df, eng_df)
+    if alerts:
+        st.markdown("### 🚨 Operational Insights & Alert Center")
+        for alert in alerts:
+            alert_type = st.error if alert["severity"] == "CRITICAL" else (st.warning if alert["severity"] == "WARNING" else st.info)
+            alert_type(f"**[{alert['category']}] {alert['message']}**\n\n*Reason:* {alert['reason']} | *Suggested Action:* {alert['suggested_action']}")
+
+    st.markdown("---")
+
+    # Analytics Charts
+    c1, c2 = st.columns(2)
+    with c1:
+        if not prod_df.empty:
+            st.plotly_chart(create_department_productivity_chart(prod_df), use_container_width=True)
+    with c2:
+        if not prod_df.empty:
+            st.plotly_chart(create_quarterly_productivity_trend_chart(prod_df), use_container_width=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if not eng_df.empty:
+            st.plotly_chart(create_energy_load_pie_chart(eng_df), use_container_width=True)
+    with c2:
+        if not eng_df.empty:
+            st.plotly_chart(create_power_factor_analysis_chart(eng_df), use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### 📋 Prediction History Logs")
+    t1, t2, t3 = st.tabs(["⚡ Energy History", "👷 Productivity History", "🧵 Inspection History"])
+    with t1:
+        st.dataframe(load_energy_history(), use_container_width=True)
+    with t2:
+        st.dataframe(load_productivity_history(), use_container_width=True)
+    with t3:
+        st.dataframe(load_inspection_history(), use_container_width=True)
+
+    st.markdown("---")
+    render_footer()
+
+# ── 6. SYSTEM HEALTH PAGE ──────────────────────────────────
+elif page == "System Health":
+    render_page_header("System Health & Diagnostic Status", "Real-time model file integrity and environment diagnostics", "🩺")
+
+    health_records = [
+        ("Productivity Model (Random Forest)", PRODUCTIVITY_MODEL_PATH.exists(), f"{PRODUCTIVITY_MODEL_PATH.stat().st_size / (1024*1024):.2f} MB" if PRODUCTIVITY_MODEL_PATH.exists() else "Missing"),
+        ("Energy Model (Random Forest)", ENERGY_MODEL_PATH.exists(), f"{ENERGY_MODEL_PATH.stat().st_size / (1024*1024):.2f} MB" if ENERGY_MODEL_PATH.exists() else "Download on demand"),
+        ("Fabric Model (MobileNetV2)", FABRIC_MODEL_PATH.exists(), f"{FABRIC_MODEL_PATH.stat().st_size / (1024*1024):.2f} MB" if FABRIC_MODEL_PATH.exists() else "Download on demand"),
+        ("Date Encoder", DATE_ENCODER_PATH.exists(), "OK" if DATE_ENCODER_PATH.exists() else "Missing"),
+        ("Quarter Encoder", QUARTER_ENCODER_PATH.exists(), "OK" if QUARTER_ENCODER_PATH.exists() else "Missing"),
+        ("Department Encoder", DEPARTMENT_ENCODER_PATH.exists(), "OK" if DEPARTMENT_ENCODER_PATH.exists() else "Missing"),
+        ("Day Encoder", DAY_ENCODER_PATH.exists(), "OK" if DAY_ENCODER_PATH.exists() else "Missing"),
+        ("Productivity Dataset", PRODUCTIVITY_DATASET_PATH.exists(), "OK" if PRODUCTIVITY_DATASET_PATH.exists() else "Missing"),
+        ("Energy Dataset", ENERGY_DATASET_PATH.exists(), "OK" if ENERGY_DATASET_PATH.exists() else "Missing"),
+    ]
+
+    health_df = pd.DataFrame(health_records, columns=["Component", "Status", "Details"])
+    health_df["Status"] = health_df["Status"].map({True: "✅ Ready / Available", False: "⚠️ Download / Missing"})
+
+    st.dataframe(health_df, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.markdown("### 🖥️ Environment Diagnostics")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("App Version", APP_VERSION)
+    with c2:
+        st.metric("Python Runtime", platform.python_version())
+    with c3:
+        st.metric("Operating System", platform.system())
+
+    st.markdown("---")
+    render_footer()
+
+# ── 7. ABOUT PROJECT PAGE ──────────────────────────────────
+elif page == "About Project":
+    render_page_header("About SilkTrace", "AI-powered decision support system for textile manufacturing", "ℹ️")
+
+    st.markdown(f"""
     <div class="silk-card">
         <h3 style="color:#e0f2fe !important; margin-bottom:0.75rem;">🧵 Project Overview</h3>
         <p style="font-size:1rem; line-height:1.7;">
-            SilkTrace is an advanced Artificial Intelligence-based decision support system engineered to
-            revolutionize textile manufacturing through intelligent productivity predictions, energy consumption
-            forecasting, and automated fabric quality inspection.
+            <strong>SilkTrace</strong> is an AI/Data Analytics platform engineered for textile manufacturing units and handloom/power-loom micro-clusters. 
+            It integrates machine learning for worker productivity forecasting, industrial energy consumption optimization, and deep-learning fabric defect detection.
         </p>
     </div>
     """, unsafe_allow_html=True)
-
     st.markdown("---")
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        st.markdown("### 🎯 Problem Statement")
-
+    c1, c2 = st.columns(2)
+    with c1:
         st.markdown("""
         <div class="silk-card" style="border-left: 4px solid #ef4444;">
-            <h4 style="color:#fca5a5 !important; margin-bottom:0.75rem;">Current Challenges in Textile Industry</h4>
-            <div class="silk-feature-item"><span style="color:#ef4444 !important;">🔴</span> Manual monitoring of worker productivity</div>
-            <div class="silk-feature-item"><span style="color:#ef4444 !important;">🔴</span> Inefficient energy consumption management</div>
-            <div class="silk-feature-item"><span style="color:#ef4444 !important;">🔴</span> Slow fabric quality inspection processes</div>
-            <div class="silk-feature-item"><span style="color:#ef4444 !important;">🔴</span> High production losses and waste</div>
-            <div class="silk-feature-item"><span style="color:#ef4444 !important;">🔴</span> Lack of data-driven decision support</div>
+            <h4 style="color:#fca5a5 !important;">🎯 Problem Statement</h4>
+            <p style="font-size:0.9rem;">Textile manufacturers face production losses due to manual productivity records, unpredictable electrical energy spikes, and slow manual fabric defect inspection processes.</p>
         </div>
         """, unsafe_allow_html=True)
-
-    with col2:
-
-        st.markdown("### 💡 Proposed Solution")
-
+    with c2:
         st.markdown("""
         <div class="silk-card" style="border-left: 4px solid #22c55e;">
-            <h4 style="color:#86efac !important; margin-bottom:0.75rem;">SilkTrace Capabilities</h4>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Intelligent Productivity Prediction</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Smart Energy Forecasting</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Automated Fabric Defect Detection</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> AI-Powered Analytics Dashboard</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">✅</span> Instant Report Generation</div>
+            <h4 style="color:#86efac !important;">💡 Proposed Solution</h4>
+            <p style="font-size:0.9rem;">SilkTrace unifies predictive ML models and MobileNetV2 computer vision into an authenticated industrial dashboard with executive analytics and automated PDF reporting.</p>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("---")
-
-    st.markdown("### 🤖 Artificial Intelligence Modules")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.markdown("""
-        <div class="silk-module-card green">
-            <div class="silk-module-icon green">👷</div>
-            <h4 style="color:#86efac !important; margin-bottom:0.75rem;">Productivity Prediction</h4>
-            <p style="font-size:0.9rem;"><strong>Algorithm:</strong> Random Forest Regressor</p>
-            <p style="font-size:0.9rem;"><strong>Purpose:</strong> Predict worker productivity to optimize workforce planning and increase efficiency.</p>
-            <p style="font-size:0.9rem;"><strong>Input Features:</strong> 14+ parameters</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown("""
-        <div class="silk-module-card amber">
-            <div class="silk-module-icon amber">⚡</div>
-            <h4 style="color:#fde68a !important; margin-bottom:0.75rem;">Energy Prediction</h4>
-            <p style="font-size:0.9rem;"><strong>Algorithm:</strong> Random Forest Regressor</p>
-            <p style="font-size:0.9rem;"><strong>Purpose:</strong> Forecast factory energy usage to reduce electricity costs and carbon footprint.</p>
-            <p style="font-size:0.9rem;"><strong>Input Features:</strong> 10+ parameters</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col3:
-        st.markdown("""
-        <div class="silk-module-card blue">
-            <div class="silk-module-icon blue">🧵</div>
-            <h4 style="color:#7dd3fc !important; margin-bottom:0.75rem;">Fabric Defect Detection</h4>
-            <p style="font-size:0.9rem;"><strong>Model:</strong> MobileNetV2 (Deep Learning)</p>
-            <p style="font-size:0.9rem;"><strong>Purpose:</strong> Automatically classify fabric defects from images with high accuracy.</p>
-            <p style="font-size:0.9rem;"><strong>Classes:</strong> Hole, Horizontal, Vertical</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    st.markdown("### 🛠 Technology Stack")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.markdown("""
-        <div class="silk-card">
-            <h4 style="color:#e0f2fe !important; margin-bottom:0.5rem;">💻 Programming & Data</h4>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Python 3.x</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Pandas</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> NumPy</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Scikit-learn</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown("""
-        <div class="silk-card">
-            <h4 style="color:#e0f2fe !important; margin-bottom:0.5rem;">🧠 Deep Learning</h4>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> TensorFlow</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Keras</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> MobileNetV2</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col3:
-        st.markdown("""
-        <div class="silk-card">
-            <h4 style="color:#e0f2fe !important; margin-bottom:0.5rem;">📊 Dashboard & Visualization</h4>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Streamlit</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Plotly</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> ReportLab</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Pillow</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    st.markdown("### 📊 Project Features")
-
-    features = [
-        "✅ Real-time Worker Productivity Prediction",
-        "✅ Accurate Energy Consumption Forecasting",
-        "✅ AI-Powered Fabric Defect Detection",
-        "✅ Interactive Analytics Dashboard",
-        "✅ PDF Inspection Report Generation",
-        "✅ CSV Data Export Capabilities",
-        "✅ Inspection History Tracking",
-        "✅ AI-Based Decision Support System"
-    ]
-    
-    for feature in features:
-        st.markdown(f"**{feature}**")
-
-    st.markdown("---")
-
-    st.markdown("### 🌍 Industrial Impact & Benefits")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("""
-        <div class="silk-card">
-            <h4 style="color:#86efac !important; margin-bottom:0.5rem;">⚡ Operational Efficiency</h4>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Reduce manual inspection time by up to 80%</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Improve workforce productivity prediction accuracy</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Optimize energy consumption and reduce costs</div>
-            <br/>
-            <h4 style="color:#7dd3fc !important; margin-bottom:0.5rem;">🔍 Quality Assurance</h4>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Automated fabric defect detection</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Consistent quality standards</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Reduced production losses</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown("""
-        <div class="silk-card">
-            <h4 style="color:#fde68a !important; margin-bottom:0.5rem;">📈 Data-Driven Decision Making</h4>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Real-time analytics and insights</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> AI-powered recommendations</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Historical performance tracking</div>
-            <br/>
-            <h4 style="color:#86efac !important; margin-bottom:0.5rem;">🌿 Sustainability</h4>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Reduce energy consumption</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Minimize production waste</div>
-            <div class="silk-feature-item"><span class="silk-feature-check">▸</span> Support sustainable manufacturing practices</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    st.markdown("### 👨‍💻 Developer Information")
-
-    st.markdown("""
-    <div class="silk-card" style="text-align:center; max-width:500px; margin: 0 auto;">
-        <div style="width:64px; height:64px; background:linear-gradient(135deg, #3b82f6, #2563eb); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.75rem; margin: 0 auto 1rem auto;">👨‍💻</div>
-        <h3 style="color:#e0f2fe !important; margin-bottom:0.25rem;">Veera Dinesh D</h3>
-        <p style="color:#94a3b8 !important; font-size:0.9rem; margin-bottom:1rem;">25AD236 &nbsp;•&nbsp; AI & Data Science</p>
-        <div class="silk-footer-divider"></div>
-        <p style="color:#94a3b8 !important; font-size:0.9rem; margin-top:1rem;">🎓 Sri Eshwar College of Engineering</p>
-        <p style="color:#64748b !important; font-size:0.85rem; margin-top:0.25rem;">SilkTrace – AI-Powered Smart Textile Monitoring & Prediction System</p>
-        <p style="color:#64748b !important; font-size:0.8rem; margin-top:0.5rem;">📧 Contact through Sri Eshwar College of Engineering</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    st.markdown("""
-    <div class="silk-card" style="text-align:center; border-color: rgba(14, 165, 233, 0.4);">
-        <h3 style="color:#7dd3fc !important; margin-bottom:0.5rem;">🚀 Transform Your Textile Manufacturing with AI</h3>
-        <p style="color:#94a3b8 !important; font-size:1rem;">SilkTrace combines cutting-edge artificial intelligence with industry expertise to revolutionize textile production.</p>
-        <p style="color:#64748b !important; font-style:italic; margin-top:0.5rem;">Making textile manufacturing smarter, more efficient, and more sustainable through AI innovation.</p>
+    st.markdown(f"""
+    <div class="silk-card" style="text-align:center;">
+        <h3 style="color:#e0f2fe !important;">👨‍💻 Developer Information</h3>
+        <p style="color:#60a5fa !important; font-size:1.1rem; font-weight:700;">{DEVELOPER_NAME}</p>
+        <p style="color:#94a3b8 !important;">{DEVELOPER_INSTITUTION}</p>
+        <span class="silk-badge blue">{APP_NAME} {APP_VERSION}</span>
     </div>
     """, unsafe_allow_html=True)
 
