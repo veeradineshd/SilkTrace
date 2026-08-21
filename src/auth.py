@@ -180,6 +180,7 @@ def render_login_screen():
             <p style="color: #94a3b8 !important; font-size: 0.88rem; margin: 4px 0;">• MobileNetV2 Fabric Defect Quality Control</p>
             <p style="color: #94a3b8 !important; font-size: 0.88rem; margin: 4px 0;">• Executive KPI Dashboard & PDF Report Exports</p>
         </div>
+    </div>
     """, unsafe_allow_html=True)
 
     if client_id and client_secret:
@@ -212,8 +213,6 @@ def render_login_screen():
         st.session_state["user_info"] = user_info
         st.session_state["user_role"] = get_user_role("admin@silktrace.ai")
         st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
 def handle_auth_gate():
     """Handle OAuth redirect callback and enforce session authentication."""
