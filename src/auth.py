@@ -301,16 +301,21 @@ def handle_auth_gate():
     """Handle Google OAuth callback and enforce session authentication."""
 
     # 1. Check native Streamlit authentication (persisted via encrypted cookie)
-    if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
-        st.session_state["authenticated"] = True
-        st.session_state["user_info"] = {
-            "name": getattr(st.user, "name", "Google User") or "Google User",
-            "email": getattr(st.user, "email", "") or "",
-            "picture": getattr(st.user, "picture", "") or "",
-            "sub": getattr(st.user, "sub", "") or ""
-        }
-        st.session_state["user_role"] = get_user_role(getattr(st.user, "email", ""))
-        return
+    # Wrapped in try/except because st.user raises StreamlitAuthError when [auth]
+    # section is absent from secrets.toml (e.g. Render without env vars set).
+    try:
+        if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+            st.session_state["authenticated"] = True
+            st.session_state["user_info"] = {
+                "name": getattr(st.user, "name", "Google User") or "Google User",
+                "email": getattr(st.user, "email", "") or "",
+                "picture": getattr(st.user, "picture", "") or "",
+                "sub": getattr(st.user, "sub", "") or ""
+            }
+            st.session_state["user_role"] = get_user_role(getattr(st.user, "email", ""))
+            return
+    except Exception:
+        pass
 
     # 2. Check if user is authenticated via session_state (e.g. Demo Access)
     if st.session_state.get("authenticated", False):
@@ -375,11 +380,11 @@ def render_sidebar_user_profile():
     """, unsafe_allow_html=True)
 
     if st.sidebar.button("🚪 Sign Out", use_container_width=True):
-        if hasattr(st, "logout"):
-            try:
+        try:
+            if hasattr(st, "logout"):
                 st.logout()
-            except Exception:
-                pass
+        except Exception:
+            pass
         st.session_state["authenticated"] = False
         st.session_state.pop("user_info", None)
         st.session_state.pop("user_role", None)
