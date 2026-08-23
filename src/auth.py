@@ -50,32 +50,8 @@ COOKIE_SECRET = "{cookie_secret}"
         pass
 
 def sync_native_auth_secrets():
-    """Ensure environment variables are bridged to st.secrets for native Streamlit OIDC."""
+    """Ensure environment variables are bridged to secrets file for native Streamlit OIDC."""
     ensure_secrets_file()
-    try:
-        if not hasattr(st, "secrets"):
-            return
-        
-        auth_sec = st.secrets.get("auth")
-        if not isinstance(auth_sec, dict):
-            auth_sec = {}
-
-        client_id = os.getenv("GOOGLE_CLIENT_ID", auth_sec.get("client_id", ""))
-        client_secret = os.getenv("GOOGLE_CLIENT_SECRET", auth_sec.get("client_secret", ""))
-        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", auth_sec.get("redirect_uri", "https://silktrace.onrender.com/oauth2callback"))
-        cookie_secret = os.getenv("COOKIE_SECRET", auth_sec.get("cookie_secret", "silktrace-super-secret-key-32chars-min-2026"))
-
-        if client_id and client_secret:
-            if hasattr(st.secrets, "_secrets"):
-                st.secrets._secrets["auth"] = {
-                    "redirect_uri": redirect_uri,
-                    "cookie_secret": cookie_secret,
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "server_metadata_url": "https://accounts.google.com/.well-known/openid-configuration"
-                }
-    except Exception:
-        pass
 
 # Synchronize on load
 sync_native_auth_secrets()
