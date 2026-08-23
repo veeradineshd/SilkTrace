@@ -3,6 +3,7 @@ import os
 import json
 import urllib.parse
 import textwrap
+from pathlib import Path
 import requests
 import streamlit as st
 from src.config import (
@@ -13,8 +14,44 @@ from src.config import (
     APP_DESCRIPTION,
 )
 
+def ensure_secrets_file():
+    """Ensure .streamlit/secrets.toml exists on disk with environment variables if on Render/Cloud."""
+    try:
+        client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "https://silktrace.onrender.com/oauth2callback")
+        cookie_secret = os.getenv("COOKIE_SECRET", "silktrace-super-secret-key-32chars-min-2026")
+
+        root_dir = Path(__file__).resolve().parent.parent
+        streamlit_dir = root_dir / ".streamlit"
+        streamlit_dir.mkdir(parents=True, exist_ok=True)
+        secrets_file = streamlit_dir / "secrets.toml"
+
+        dash_streamlit_dir = root_dir / "dashboard" / ".streamlit"
+        dash_streamlit_dir.mkdir(parents=True, exist_ok=True)
+        dash_secrets_file = dash_streamlit_dir / "secrets.toml"
+
+        if client_id and client_secret:
+            content = f"""[auth]
+redirect_uri = "{redirect_uri}"
+cookie_secret = "{cookie_secret}"
+client_id = "{client_id}"
+client_secret = "{client_secret}"
+server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+
+GOOGLE_CLIENT_ID = "{client_id}"
+GOOGLE_CLIENT_SECRET = "{client_secret}"
+GOOGLE_REDIRECT_URI = "{redirect_uri}"
+COOKIE_SECRET = "{cookie_secret}"
+"""
+            secrets_file.write_text(content, encoding="utf-8")
+            dash_secrets_file.write_text(content, encoding="utf-8")
+    except Exception:
+        pass
+
 def sync_native_auth_secrets():
     """Ensure environment variables are bridged to st.secrets for native Streamlit OIDC."""
+    ensure_secrets_file()
     try:
         if not hasattr(st, "secrets"):
             return
@@ -29,15 +66,14 @@ def sync_native_auth_secrets():
         cookie_secret = os.getenv("COOKIE_SECRET", auth_sec.get("cookie_secret", "silktrace-super-secret-key-32chars-min-2026"))
 
         if client_id and client_secret:
-            if not hasattr(st.secrets, "_secrets"):
-                return
-            st.secrets._secrets["auth"] = {
-                "redirect_uri": redirect_uri,
-                "cookie_secret": cookie_secret,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "server_metadata_url": "https://accounts.google.com/.well-known/openid-configuration"
-            }
+            if hasattr(st.secrets, "_secrets"):
+                st.secrets._secrets["auth"] = {
+                    "redirect_uri": redirect_uri,
+                    "cookie_secret": cookie_secret,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "server_metadata_url": "https://accounts.google.com/.well-known/openid-configuration"
+                }
     except Exception:
         pass
 
@@ -204,11 +240,11 @@ def render_login_screen():
     st.markdown("""<style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 html,body,[data-testid="stAppViewContainer"],.main{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;}
-[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 50% 15%,rgba(59,130,246,.12),transparent 50%),radial-gradient(circle at 80% 80%,rgba(14,165,233,.08),transparent 40%),linear-gradient(135deg,#0b0f19 0%,#111827 50%,#0f172a 100%);}
-[data-testid="stSidebar"],[data-testid="collapsedControl"]{display:none !important;}
-.main .block-container{padding-top:2rem !important;padding-bottom:2rem !important;background:transparent !important;border:none !important;box-shadow:none !important;backdrop-filter:none !important;}
+[data-testid="stAppViewContainer"]{{background:radial-gradient(circle at 50% 15%,rgba(59,130,246,.12),transparent 50%),radial-gradient(circle at 80% 80%,rgba(14,165,233,.08),transparent 40%),linear-gradient(135deg,#0b0f19 0%,#111827 50%,#0f172a 100%);}}
+[data-testid="stSidebar"],[data-testid="collapsedControl"]{{display:none !important;}}
+.main .block-container{padding-top:2rem !important;padding-bottom:2rem !important;background:transparent !important;border:none !important;box-shadow:none !important;backdrop-filter:none !important;}}
 .silk-login-wrapper{background:rgba(17,24,39,.72);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.1);border-radius:24px;padding:2.5rem 2.25rem 1.75rem;box-shadow:0 25px 60px -15px rgba(0,0,0,.6),inset 0 1px 1px rgba(255,255,255,.15);text-align:center;margin-bottom:1rem;}
-.silk-login-logo{display:inline-flex;align-items:center;justify-content:center;width:72px;height:72px;background:linear-gradient(135deg,rgba(59,130,246,.2),rgba(14,165,233,.1));border:1px solid rgba(96,165,250,.3);border-radius:20px;font-size:36px;margin-bottom:1rem;box-shadow:0 8px 24px rgba(59,130,246,.2);}
+.silk-login-logo{display:inline-flex;align-items:center;justify-content:center;width:72px;height:72px;background:linear-gradient(135deg,rgba(59,130,246,.2),rgba(14,165,233,.1));border:1px solid rgba(96,165,250,.3);border-radius:20px;font-size:36px;margin-bottom:1rem;box-shadow:0 8px 24px rgba(59,130,246,.2);}}
 .silk-login-title{font-size:2.25rem;font-weight:800;letter-spacing:-.03em;background:linear-gradient(135deg,#fff 30%,#93c5fd 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:.35rem;}
 .silk-login-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;background:rgba(59,130,246,.15);border:1px solid rgba(96,165,250,.3);border-radius:20px;color:#93c5fd !important;font-size:.75rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin-bottom:.75rem;}
 .silk-login-tagline{color:#94a3b8 !important;font-size:.95rem;line-height:1.5;margin-bottom:1.5rem;font-weight:400;}
@@ -220,7 +256,7 @@ html,body,[data-testid="stAppViewContainer"],.main{font-family:'Inter',-apple-sy
 .silk-dev-notice{background:rgba(30,58,138,.25);border:1px solid rgba(96,165,250,.25);border-radius:12px;padding:10px 14px;color:#bfdbfe !important;font-size:.82rem;text-align:center;margin-bottom:.75rem;line-height:1.4;}
 div.stButton>button{background:linear-gradient(135deg,#2563eb,#1d4ed8) !important;color:#fff !important;border:1px solid rgba(96,165,250,.3) !important;border-radius:12px !important;font-weight:600 !important;font-size:.95rem !important;padding:.75rem 1.5rem !important;box-shadow:0 4px 18px rgba(37,99,235,.35) !important;transition:all .2s cubic-bezier(.4,0,.2,1) !important;width:100% !important;margin-bottom:8px !important;}
 div.stButton>button:hover{background:linear-gradient(135deg,#3b82f6,#2563eb) !important;box-shadow:0 8px 25px rgba(59,130,246,.5) !important;transform:translateY(-2px) !important;border-color:rgba(147,197,253,.5) !important;}
-div.stButton>button:active{transform:translateY(0) !important;}
+div.stButton>button:active{{transform:translateY(0) !important;}}
 .silk-login-footer{color:#64748b !important;font-size:.75rem;text-align:center;margin-top:1.25rem;}
 </style>""", unsafe_allow_html=True)
 
@@ -245,11 +281,18 @@ div.stButton>button:active{transform:translateY(0) !important;}
         )
 
         if client_id and client_secret:
-            # Native Streamlit OIDC Login (sets 30-day encrypted cookie)
+            # Google Login button with safe fallback
             if st.button("🌐 Continue with Google", use_container_width=True, key="google_oauth_btn"):
-                if hasattr(st, "login"):
-                    st.login()
-                else:
+                try:
+                    ensure_secrets_file()
+                    sync_native_auth_secrets()
+                    if hasattr(st, "login"):
+                        st.login()
+                    else:
+                        auth_url = get_google_auth_url()
+                        st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True)
+                        st.stop()
+                except Exception:
                     auth_url = get_google_auth_url()
                     st.markdown(f'<meta http-equiv="refresh" content="0; url={auth_url}">', unsafe_allow_html=True)
                     st.stop()
