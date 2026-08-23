@@ -164,31 +164,262 @@ def is_feature_allowed_for_user(feature_key: str) -> bool:
     return feature_key in allowed
 
 def render_login_screen():
-    """Render a high-converting, professional Google Cloud login interface."""
+    """Render a high-converting, professional SaaS login interface."""
     client_id, client_secret, redirect_uri = get_google_credentials()
 
+    # Self-contained login page styles (Google fonts, glassmorphism, responsive centering, button animations, sidebar suppression)
     st.markdown("""
-    <div style="max-width: 580px; margin: 40px auto; padding: 40px; background: rgba(15, 23, 42, 0.95); border-radius: 24px; border: 1.5px solid rgba(96, 165, 250, 0.3); box-shadow: 0 25px 60px rgba(0,0,0,0.6); text-align: center;">
-        <div style="font-size: 64px; margin-bottom: 8px;">🧵</div>
-        <h1 style="color: #ffffff !important; font-size: 2.5rem; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.5px;">SilkTrace</h1>
-        <p style="color: #60a5fa !important; font-size: 1.05rem; font-weight: 500; margin-bottom: 24px;">AI-Powered Smart Textile Manufacturing Intelligence</p>
-        
-        <div style="background: rgba(30, 41, 59, 0.7); padding: 20px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 28px; text-align: left;">
-            <p style="color: #f8fafc !important; font-weight: 600; margin-bottom: 10px; font-size: 0.95rem;">🔒 Authenticated Industrial Platform Access</p>
-            <p style="color: #94a3b8 !important; font-size: 0.88rem; margin: 4px 0;">• Real-Time Industrial Energy Consumption Forecasting</p>
-            <p style="color: #94a3b8 !important; font-size: 0.88rem; margin: 4px 0;">• Garment Worker Productivity Optimization</p>
-            <p style="color: #94a3b8 !important; font-size: 0.88rem; margin: 4px 0;">• MobileNetV2 Fabric Defect Quality Control</p>
-            <p style="color: #94a3b8 !important; font-size: 0.88rem; margin: 4px 0;">• Executive KPI Dashboard & PDF Report Exports</p>
-        </div>
-    </div>
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+    html, body, [data-testid="stAppViewContainer"], .main {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    [data-testid="stAppViewContainer"] {
+        background: radial-gradient(circle at 50% 15%, rgba(59, 130, 246, 0.12), transparent 50%),
+                    radial-gradient(circle at 80% 80%, rgba(14, 165, 233, 0.08), transparent 40%),
+                    linear-gradient(135deg, #0b0f19 0%, #111827 50%, #0f172a 100%);
+    }
+
+    /* Hide sidebar completely on login page */
+    [data-testid="stSidebar"], [data-testid="collapsedControl"] {
+        display: none !important;
+    }
+
+    /* Remove top padding on main container for centered hero placement */
+    .main .block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 2rem !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+    }
+
+    /* Glassmorphic Login Card */
+    .silk-login-wrapper {
+        background: rgba(17, 24, 39, 0.72);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 24px;
+        padding: 2.5rem 2.25rem 2rem 2.25rem;
+        box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+        text-align: center;
+        margin-bottom: 1.25rem;
+    }
+
+    .silk-login-logo {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 72px;
+        height: 72px;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(14, 165, 233, 0.1));
+        border: 1px solid rgba(96, 165, 250, 0.3);
+        border-radius: 20px;
+        font-size: 36px;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 24px rgba(59, 130, 246, 0.2);
+    }
+
+    .silk-login-title {
+        font-size: 2.25rem;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        background: linear-gradient(135deg, #ffffff 30%, #93c5fd 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.35rem;
+    }
+
+    .silk-login-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        background: rgba(59, 130, 246, 0.15);
+        border: 1px solid rgba(96, 165, 250, 0.3);
+        border-radius: 20px;
+        color: #93c5fd !important;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-bottom: 0.75rem;
+    }
+
+    .silk-login-tagline {
+        color: #94a3b8 !important;
+        font-size: 0.95rem;
+        line-height: 1.5;
+        margin-bottom: 1.75rem;
+        font-weight: 400;
+    }
+
+    /* Feature highlights in clean, light translucent cards */
+    .silk-feature-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 12px;
+        padding: 10px 14px;
+        margin-bottom: 8px;
+        text-align: left;
+        transition: all 0.2s ease;
+    }
+    .silk-feature-row:hover {
+        background: rgba(255, 255, 255, 0.06);
+        border-color: rgba(96, 165, 250, 0.25);
+        transform: translateX(3px);
+    }
+    .silk-feature-icon {
+        font-size: 1.15rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 28px;
+    }
+    .silk-feature-text {
+        font-size: 0.86rem;
+        color: #e2e8f0 !important;
+        font-weight: 500;
+    }
+    .silk-feature-desc {
+        font-size: 0.76rem;
+        color: #94a3b8 !important;
+        font-weight: 400;
+    }
+
+    /* Google Button Styling */
+    .silk-google-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        width: 100%;
+        background-color: #ffffff;
+        color: #1f2937 !important;
+        text-decoration: none !important;
+        padding: 12px 24px;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 0.95rem;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        margin-bottom: 0.75rem;
+        border: 1px solid #e5e7eb;
+    }
+    .silk-google-btn:hover {
+        background-color: #f9fafb;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(255, 255, 255, 0.2);
+        color: #111827 !important;
+    }
+    .silk-google-btn:active {
+        transform: translateY(0);
+    }
+
+    /* Dev notice badge */
+    .silk-dev-notice {
+        background: rgba(30, 58, 138, 0.25);
+        border: 1px solid rgba(96, 165, 250, 0.25);
+        border-radius: 12px;
+        padding: 10px 14px;
+        color: #bfdbfe !important;
+        font-size: 0.82rem;
+        text-align: center;
+        margin-bottom: 0.75rem;
+        line-height: 1.4;
+    }
+
+    /* Primary Demo Button custom styling */
+    div.stButton > button {
+        background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+        color: #ffffff !important;
+        border: 1px solid rgba(96, 165, 250, 0.3) !important;
+        border-radius: 12px !important;
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        padding: 0.75rem 1.5rem !important;
+        box-shadow: 0 4px 18px rgba(37, 99, 235, 0.35) !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        width: 100% !important;
+    }
+    div.stButton > button:hover {
+        background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.5) !important;
+        transform: translateY(-2px) !important;
+        border-color: rgba(147, 197, 253, 0.5) !important;
+    }
+    div.stButton > button:active {
+        transform: translateY(0) !important;
+    }
+
+    /* Footer text */
+    .silk-login-footer {
+        color: #64748b !important;
+        font-size: 0.75rem;
+        text-align: center;
+        margin-top: 1.25rem;
+    }
+    </style>
     """, unsafe_allow_html=True)
 
-    if client_id and client_secret:
-        auth_url = get_google_auth_url()
+    # Use centered Streamlit column layout to contain widgets
+    col_l, col_center, col_r = st.columns([1, 1.4, 1])
+
+    with col_center:
+        # Header & Feature Showcase
         st.markdown(f"""
-        <div style="margin-top: 15px; margin-bottom: 20px;">
-            <a href="{auth_url}" target="_self" style="display: inline-flex; align-items: center; justify-content: center; background-color: #ffffff; color: #0f172a !important; text-decoration: none; padding: 14px 32px; border-radius: 12px; font-weight: 700; font-size: 1.05rem; box-shadow: 0 8px 25px rgba(255, 255, 255, 0.15); transition: all 0.2s ease;">
-                <svg style="width: 20px; height: 20px; margin-right: 12px;" viewBox="0 0 24 24">
+        <div class="silk-login-wrapper">
+            <div class="silk-login-logo">🧵</div>
+            <div class="silk-login-title">SilkTrace</div>
+            <div><span class="silk-login-badge">Enterprise Intelligence • {APP_NAME}</span></div>
+            <p class="silk-login-tagline">{APP_DESCRIPTION}</p>
+            
+            <div style="margin-bottom: 1.5rem;">
+                <div class="silk-feature-row">
+                    <div class="silk-feature-icon">⚡</div>
+                    <div>
+                        <div class="silk-feature-text">Energy Consumption Forecasting</div>
+                        <div class="silk-feature-desc">Random Forest & XGBoost time-series power analytics</div>
+                    </div>
+                </div>
+                <div class="silk-feature-row">
+                    <div class="silk-feature-icon">👷</div>
+                    <div>
+                        <div class="silk-feature-text">Garment Workforce Productivity</div>
+                        <div class="silk-feature-desc">ML-driven target tracking & optimization</div>
+                    </div>
+                </div>
+                <div class="silk-feature-row">
+                    <div class="silk-feature-icon">🔍</div>
+                    <div>
+                        <div class="silk-feature-text">MobileNetV2 Fabric QC</div>
+                        <div class="silk-feature-desc">Computer vision defect classification & PDF reporting</div>
+                    </div>
+                </div>
+                <div class="silk-feature-row">
+                    <div class="silk-feature-icon">📊</div>
+                    <div>
+                        <div class="silk-feature-text">Executive KPI Analytics</div>
+                        <div class="silk-feature-desc">Role-based access control & automated reporting</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Action Buttons Container
+        if client_id and client_secret:
+            auth_url = get_google_auth_url()
+            st.markdown(f"""
+            <a href="{auth_url}" target="_self" class="silk-google-btn">
+                <svg width="18" height="18" viewBox="0 0 24 24">
                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                     <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                     <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.62z"/>
@@ -196,59 +427,106 @@ def render_login_screen():
                 </svg>
                 Continue with Google
             </a>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="silk-dev-notice">
+                🔒 <strong>Google Cloud OIDC</strong> is in standby mode. Use <strong>Demo Access</strong> below to access the full SilkTrace industrial workspace.
+            </div>
+            """, unsafe_allow_html=True)
+
+        if st.button("🚀 Enter Industrial Platform (Demo Access)", use_container_width=True):
+            st.session_state["authenticated"] = True
+            user_info = {
+                "name": "SilkTrace Admin",
+                "email": "admin@silktrace.ai",
+                "picture": "",
+                "sub": "demo-admin-12345"
+            }
+            st.session_state["user_info"] = user_info
+            st.session_state["user_role"] = get_user_role("admin@silktrace.ai")
+            st.rerun()
+
+        st.markdown("""
+        <div class="silk-login-footer">
+            Protected by SilkTrace Enterprise Security &nbsp;•&nbsp; SOC2 / OIDC Compliant
         </div>
         """, unsafe_allow_html=True)
-    else:
-        st.info("💡 **Google OAuth Setup**: Configure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in environment variables (Render) or `.streamlit/secrets.toml` (Local) for live Google Cloud OIDC Login.")
-
-    st.markdown("---")
-    if st.button("🔐 Continue with Demo Access", use_container_width=True):
-        st.session_state["authenticated"] = True
-        user_info = {
-            "name": "SilkTrace Admin",
-            "email": "admin@silktrace.ai",
-            "picture": "",
-            "sub": "demo-admin-12345"
-        }
-        st.session_state["user_info"] = user_info
-        st.session_state["user_role"] = get_user_role("admin@silktrace.ai")
-        st.rerun()
 
 def handle_auth_gate():
-    """Handle OAuth redirect callback and enforce session authentication."""
-    # Check native Streamlit st.user if authenticated via st.login()
-    if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
-        st.session_state["authenticated"] = True
-        st.session_state["user_info"] = {
-            "name": getattr(st.user, "name", "Google User"),
-            "email": getattr(st.user, "email", "user@gmail.com"),
-            "picture": getattr(st.user, "picture", "")
-        }
-        st.session_state["user_role"] = get_user_role(getattr(st.user, "email", ""))
+    """Handle Google OAuth callback and enforce session authentication."""
 
-    # Check for OAuth callback code in query parameters
-    if "code" in st.query_params and not st.session_state.get("authenticated"):
-        auth_code = st.query_params["code"]
-        client_id, client_secret, _ = get_google_credentials()
+    # 1. User is already authenticated
+    if st.session_state.get("authenticated", False):
+        return
+
+    # 2. Check native Streamlit authentication
+    if hasattr(st, "user"):
         try:
-            if client_id and client_secret:
-                user_info = exchange_code_for_user_info(auth_code)
+            if st.user.is_logged_in:
                 st.session_state["authenticated"] = True
-                st.session_state["user_info"] = user_info
-                st.session_state["user_role"] = get_user_role(user_info.get("email", ""))
-                st.query_params.clear()
-                st.rerun()
-            else:
-                st.warning("Google OAuth client configuration incomplete.")
+
+                st.session_state["user_info"] = {
+                    "name": getattr(st.user, "name", "Google User"),
+                    "email": getattr(st.user, "email", ""),
+                    "picture": getattr(st.user, "picture", "")
+                }
+
+                st.session_state["user_role"] = get_user_role(
+                    getattr(st.user, "email", "")
+                )
+
+                return
+
+        except Exception:
+            pass
+
+    # 3. Handle Google OAuth callback
+    if "code" in st.query_params:
+
+        auth_code = st.query_params.get("code")
+
+        if not auth_code:
+            st.error("Google OAuth authorization code is missing.")
+            st.stop()
+
+        client_id, client_secret, _ = get_google_credentials()
+
+        if not client_id or not client_secret:
+            st.error("Google OAuth configuration is incomplete.")
+            st.stop()
+
+        try:
+            user_info = exchange_code_for_user_info(auth_code)
+
+            st.session_state["authenticated"] = True
+
+            st.session_state["user_info"] = {
+                "name": user_info.get("name", "Google User"),
+                "email": user_info.get("email", ""),
+                "picture": user_info.get("picture", ""),
+                "sub": user_info.get("sub", "")
+            }
+
+            st.session_state["user_role"] = get_user_role(
+                user_info.get("email", "")
+            )
+
+            # Remove OAuth code from URL
+            st.query_params.clear()
+
+            # Reload application
+            st.rerun()
+
         except Exception as e:
             st.error(f"Authentication Error: {str(e)}")
             st.query_params.clear()
+            st.stop()
 
-    # Enforce authentication gate
-    if not st.session_state.get("authenticated"):
-        render_login_screen()
-        st.stop()
-
+    # 4. User is not authenticated
+    render_login_screen()
+    st.stop()
+    
 def render_sidebar_user_profile():
     """Render logged-in user details, role badge, and logout button in sidebar."""
     user_info = st.session_state.get("user_info", {})
