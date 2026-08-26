@@ -18,7 +18,7 @@ def log_energy_prediction(date: int, week_status: str, day: str, load_type: str,
         "WeekStatus": week_status,
         "Day": day,
         "Load_Type": load_type,
-        "Predicted_Energy_kWh": round(float(predicted_kwh), 2),
+        "Predicted_Energy_kWh": round(predicted_kwh, 2),
         "User": user_email,
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }])
@@ -36,11 +36,11 @@ def log_productivity_prediction(date: str, department: str, day: str, team: int,
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 
     new_record = pd.DataFrame([{
-        "Date": str(date),
-        "Department": str(department),
-        "Day": str(day),
-        "Team": int(team),
-        "Predicted_Productivity": round(float(predicted_prod), 4),
+        "Date": date,
+        "Department": department,
+        "Day": day,
+        "Team": team,
+        "Predicted_Productivity": round(predicted_prod, 4),
         "User": user_email,
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }])
@@ -61,8 +61,8 @@ def log_fabric_inspection(defect_class: str, confidence: float, user_email: str 
 
     new_record = pd.DataFrame([{
         "Date": timestamp_str,
-        "Detected Defect": str(defect_class),
-        "Confidence (%)": round(float(confidence), 2),
+        "Detected Defect": defect_class,
+        "Confidence (%)": round(confidence, 2),
         "User": user_email,
         "Timestamp": timestamp_str
     }])
