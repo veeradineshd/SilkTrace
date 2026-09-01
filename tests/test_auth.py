@@ -1,116 +1,65 @@
-# SilkTrace — Automated Authentication Test Suite
+# SilkTrace — Automated Authentication Test Suite (Native Streamlit OIDC)
 import unittest
 import os
 import sys
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import streamlit as st
 
 # Add workspace root to sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Set test environment
+# Set test environment variables
+os.environ["GOOGLE_CLIENT_ID"] = "test-google-client-id-123.apps.googleusercontent.com"
+os.environ["GOOGLE_CLIENT_SECRET"] = "test-google-client-secret-xyz"
+os.environ["GOOGLE_REDIRECT_URI"] = "https://silktrace.onrender.com/oauth2callback"
 os.environ["COOKIE_SECRET"] = "test-cookie-secret-min-32-chars-key-2026"
 
 from src.auth import (
-    _create_auth_cookie_value,
-    _read_auth_cookie,
-    _get_signer,
+    ensure_secrets_file,
+    sync_native_auth_secrets,
+    get_secret,
+    get_google_credentials,
     get_user_role,
     is_feature_allowed_for_user,
+    handle_auth_gate,
+    render_sidebar_user_profile,
     ROLE_PERMISSIONS,
     DEFAULT_ROLE_MAPPING,
 )
-from itsdangerous import BadSignature, SignatureExpired
 
 
-class TestSilkTraceAuthentication(unittest.TestCase):
+class TestSilkTraceNativeOIDCAuthentication(unittest.TestCase):
 
     def setUp(self):
-        self.user_info = {
-            "name": "SilkTrace Engineer",
-            "email": "engineer@silktrace.ai",
-            "picture": "https://example.com/pic.jpg",
-            "sub": "google-user-1234567890",
-        }
-        self.role = "ANALYST"
+        # Clear test session state
+        st.session_state.clear()
 
-    def test_01_cookie_creation_and_signing(self):
-        """Test that auth cookie is created and signed properly."""
-        cookie_val = _create_auth_cookie_value(self.user_info, self.role)
-        self.assertIsNotNone(cookie_val)
-        self.assertIsInstance(cookie_val, str)
-        self.assertGreater(len(cookie_val), 20)
+    def test_01_secrets_bridge_configuration(self):
+        """Test that ensure_secrets_file generates valid [auth] section for Native Streamlit OIDC."""
+        ensure_secrets_file()
+        secrets_path = BASE_DIR / ".streamlit" / "secrets.toml"
+        self.assertTrue(secrets_path.exists())
 
-        # Verify decoding with valid signer
-        signer = _get_signer()
-        self.assertIsNotNone(signer)
-        payload = signer.loads(cookie_val)
-        self.assertEqual(payload["email"], "engineer@silktrace.ai")
-        self.assertEqual(payload["name"], "SilkTrace Engineer")
-        self.assertEqual(payload["role"], "ANALYST")
-        self.assertEqual(payload["sub"], "google-user-1234567890")
-        self.assertIn("iat", payload)
+        content = secrets_path.read_text(encoding="utf-8")
+        self.assertIn("[auth]", content)
+        self.assertIn('redirect_uri = "https://silktrace.onrender.com/oauth2callback"', content)
+        self.assertIn('server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"', content)
+        self.assertIn('client_id = "test-google-client-id-123.apps.googleusercontent.com"', content)
+        self.assertIn('client_secret = "test-google-client-secret-xyz"', content)
+        self.assertIn('cookie_secret = "test-cookie-secret-min-32-chars-key-2026"', content)
 
-    def test_02_tampered_cookie_rejection(self):
-        """Test that any tampering of the signed cookie is rejected."""
-        cookie_val = _create_auth_cookie_value(self.user_info, self.role)
-        self.assertIsNotNone(cookie_val)
+    def test_02_credentials_loading(self):
+        """Test reading Google credentials from environment."""
+        cid, csecret, redirect_uri = get_google_credentials()
+        self.assertEqual(cid, "test-google-client-id-123.apps.googleusercontent.com")
+        self.assertEqual(csecret, "test-google-client-secret-xyz")
+        self.assertEqual(redirect_uri, "https://silktrace.onrender.com/oauth2callback")
 
-        # Tamper with the cookie string
-        tampered = cookie_val[:-4] + "abcd"
-        signer = _get_signer()
-        self.assertIsNotNone(signer)
-        assert signer is not None
-
-        with self.assertRaises(BadSignature):
-            signer.loads(tampered)
-
-    def test_03_expired_cookie_rejection(self):
-        """Test that expired cookies are rejected based on max_age."""
-        signer = _get_signer()
-        self.assertIsNotNone(signer)
-        assert signer is not None
-        payload = {
-            "sub": self.user_info["sub"],
-            "email": self.user_info["email"],
-            "name": self.user_info["name"],
-            "pic": self.user_info["picture"],
-            "role": self.role,
-        }
-        # Dump at t=1000
-        with patch("time.time", return_value=1000.0):
-            old_cookie = signer.dumps(payload)
-
-        # Load at t=2000 with max_age=10 seconds (should raise SignatureExpired)
-        with patch("time.time", return_value=2000.0):
-            with self.assertRaises(SignatureExpired):
-                signer.loads(old_cookie, max_age=10)
-
-    def test_04_session_restoration(self):
-        """Test reading and verifying valid auth cookie payload."""
-        signer = _get_signer()
-        self.assertIsNotNone(signer)
-        assert signer is not None
-        payload = {
-            "sub": "user-test-id",
-            "email": "operator@silktrace.ai",
-            "name": "Operator Joe",
-            "pic": "",
-            "role": "OPERATOR",
-        }
-        signed = signer.dumps(payload)
-
-        # Verify decoding and payload structure
-        loaded = signer.loads(signed, max_age=86400)
-        self.assertEqual(loaded["email"], "operator@silktrace.ai")
-        self.assertEqual(loaded["role"], "OPERATOR")
-        self.assertEqual(loaded["name"], "Operator Joe")
-
-    def test_05_role_permissions_and_mapping(self):
-        """Test role mapping and RBAC permissions."""
+    def test_03_role_mapping_rbac(self):
+        """Test role mapping and RBAC matrix permissions."""
         admin_role = get_user_role("admin@silktrace.ai")
         self.assertEqual(admin_role, "ADMIN")
 
@@ -124,20 +73,56 @@ class TestSilkTraceAuthentication(unittest.TestCase):
         self.assertNotIn("reports", ROLE_PERMISSIONS["VIEWER"])
         self.assertIn("analytics", ROLE_PERMISSIONS["VIEWER"])
 
-    def test_06_logout_cookie_invalidation(self):
-        """Test logout clears session state and expires cookie."""
-        mock_session = {
-            "authenticated": True,
-            "user_info": self.user_info,
-            "user_role": "ADMIN",
-        }
-        mock_session["authenticated"] = False
-        mock_session.pop("user_info", None)
-        mock_session.pop("user_role", None)
+    def test_04_native_user_feature_permissions(self):
+        """Test is_feature_allowed_for_user with simulated native st.user."""
+        mock_user = MagicMock()
+        mock_user.is_logged_in = True
+        mock_user.email = "admin@silktrace.ai"
+        mock_user.name = "SilkTrace Admin"
 
-        self.assertFalse(mock_session["authenticated"])
-        self.assertNotIn("user_info", mock_session)
-        self.assertNotIn("user_role", mock_session)
+        with patch.object(st, "user", mock_user, create=True):
+            self.assertTrue(is_feature_allowed_for_user("system_health"))
+            self.assertTrue(is_feature_allowed_for_user("reports"))
+            self.assertTrue(is_feature_allowed_for_user("analytics"))
+
+    def test_05_demo_access_permissions(self):
+        """Test is_feature_allowed_for_user in isolated Demo Access mode."""
+        # When unauthenticated and not demo
+        mock_user = MagicMock()
+        mock_user.is_logged_in = False
+        with patch.object(st, "user", mock_user, create=True):
+            self.assertFalse(is_feature_allowed_for_user("analytics"))
+
+            # Activate Demo Access
+            st.session_state["demo_authenticated"] = True
+            st.session_state["demo_user_role"] = "ADMIN"
+            self.assertTrue(is_feature_allowed_for_user("system_health"))
+            self.assertTrue(is_feature_allowed_for_user("analytics"))
+
+    def test_06_auth_gate_logged_in_user(self):
+        """Test handle_auth_gate passes cleanly when native st.user is logged in."""
+        mock_user = MagicMock()
+        mock_user.is_logged_in = True
+        mock_user.email = "user@silktrace.ai"
+
+        with patch.object(st, "user", mock_user, create=True):
+            # Should return without calling st.stop or render_login_screen
+            with patch("src.auth.render_login_screen") as mock_render:
+                handle_auth_gate()
+                mock_render.assert_not_called()
+
+    def test_07_auth_gate_unauthenticated_stops(self):
+        """Test handle_auth_gate renders login and stops when unauthenticated."""
+        mock_user = MagicMock()
+        mock_user.is_logged_in = False
+
+        with patch.object(st, "user", mock_user, create=True):
+            with patch("src.auth.render_login_screen") as mock_render, \
+                 patch("streamlit.stop", side_effect=SystemExit) as mock_stop:
+                with self.assertRaises(SystemExit):
+                    handle_auth_gate()
+                mock_render.assert_called_once()
+                mock_stop.assert_called_once()
 
 
 if __name__ == "__main__":

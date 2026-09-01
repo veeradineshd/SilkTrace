@@ -48,15 +48,16 @@ graph TD
 
 ## 3. Data Flow & Security Lifecycle
 
-### 3.1 Authentication Sequence (Google Cloud OIDC)
+### 3.1 Authentication Sequence (Native Streamlit OIDC)
 1. User hits application entry point (`dashboard/app.py`).
-2. `handle_auth_gate()` in `src/auth.py` evaluates `st.session_state["authenticated"]`.
-3. If unauthenticated, access is halted via `st.stop()`, displaying the branded login screen with "Sign in with Google" button.
-4. User initiates login -> Redirected to `https://accounts.google.com/o/oauth2/v2/auth`.
-5. Upon authorization, Google redirects to configured callback URL (`http://localhost:8501/oauth2callback` or `https://<render-service>.onrender.com/oauth2callback`).
-6. `exchange_code_for_user_info()` exchanges auth code for token and retrieves profile from Google UserInfo API.
-7. User email is evaluated against `SILKTRACE_ROLE_MAP` (`ADMIN`, `ANALYST`, `OPERATOR`, `VIEWER`).
-8. User profile and role permissions are populated into `st.session_state`.
+2. `handle_auth_gate()` in `src/auth.py` evaluates `st.user.is_logged_in` (and isolated `st.session_state["demo_authenticated"]`).
+3. If unauthenticated, access is halted via `st.stop()`, displaying the branded login screen with "Continue with Google" button and Demo Access option.
+4. User clicks "Continue with Google" -> Streamlit invokes `st.login()`, natively redirecting to Google's OIDC authorization endpoint.
+5. Upon user consent, Google redirects to `/oauth2callback`, where Streamlit's Tornado server layer natively handles the callback, verifies OIDC tokens, and issues an encrypted session cookie via standard HTTP `Set-Cookie` response headers.
+6. `st.user` is populated with `name`, `email`, `picture`, `sub`.
+7. User email is evaluated against `SILKTRACE_ROLE_MAP` (`ADMIN`, `ANALYST`, `OPERATOR`, `VIEWER`) via `get_user_role(st.user.email)`.
+8. User is granted access across browser tabs, reloads, and multi-session navigation without authentication loops.
+9. Logout is handled cleanly via `st.logout()`.
 
 ### 3.2 Machine Learning Inference Pipelines
 - **Productivity Model**: Random Forest Regressor (14 features). Input validated -> Categorical features label-encoded -> Predict actual productivity -> Derive status vs target -> Log execution timestamp to `history/productivity_history.csv`.

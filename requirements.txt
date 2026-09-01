@@ -25,6 +25,3 @@ plotly==6.9.0
 # ── HTTP / OAuth / OIDC ───────────────────────
 requests==2.34.2
 Authlib==1.7.2
-
-# ── Secure signed cookie / session (HMAC) ────────────
-itsdangerous>=2.2.0
