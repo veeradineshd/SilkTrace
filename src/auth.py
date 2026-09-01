@@ -75,17 +75,23 @@ sync_native_auth_secrets()
 
 
 def get_secret(name: str, default: str = "") -> str:
-    """Retrieve secret from environment variables or st.secrets safely.
+    """Retrieve secret from environment variables, st.secrets, or secrets.toml safely.
 
     1. First checks system environment variables (os.environ / os.getenv)
        — primary for Render, Docker, and CI/CD pipelines.
-    2. Then safely checks st.secrets inside a try-except block without triggering
-       StreamlitSecretNotFoundError on environments where secrets.toml is absent.
-    3. Supports both top-level keys and nested [auth] sections.
+    2. Safely checks st.secrets without crashing if absent.
+    3. Direct disk fallback to .streamlit/secrets.toml via tomllib.
     """
     val = os.getenv(name)
     if val is not None and val.strip():
         return val.strip()
+
+    mapping = {
+        "GOOGLE_REDIRECT_URI": "redirect_uri",
+        "COOKIE_SECRET":       "cookie_secret",
+        "GOOGLE_CLIENT_ID":    "client_id",
+        "GOOGLE_CLIENT_SECRET":"client_secret",
+    }
 
     try:
         if name in st.secrets:
@@ -95,16 +101,30 @@ def get_secret(name: str, default: str = "") -> str:
 
         auth_sec = st.secrets.get("auth")
         if isinstance(auth_sec, dict):
-            mapping = {
-                "GOOGLE_REDIRECT_URI": "redirect_uri",
-                "COOKIE_SECRET":       "cookie_secret",
-                "GOOGLE_CLIENT_ID":    "client_id",
-                "GOOGLE_CLIENT_SECRET":"client_secret",
-            }
             if name in mapping and mapping[name] in auth_sec:
                 v = auth_sec[mapping[name]]
                 if v:
                     return str(v).strip()
+    except Exception:
+        pass
+
+    # Disk fallback via tomllib
+    try:
+        import tomllib
+        root_dir = Path(__file__).resolve().parent.parent
+        for p in [root_dir / ".streamlit" / "secrets.toml", root_dir / "dashboard" / ".streamlit" / "secrets.toml"]:
+            if p.exists():
+                data = tomllib.loads(p.read_text(encoding="utf-8"))
+                if name in data and str(data[name]).strip():
+                    return str(data[name]).strip()
+                auth_data = data.get("auth", {})
+                if isinstance(auth_data, dict):
+                    if name in auth_data and str(auth_data[name]).strip():
+                        return str(auth_data[name]).strip()
+                    if name in mapping and mapping[name] in auth_data:
+                        v = auth_data[mapping[name]]
+                        if v and str(v).strip():
+                            return str(v).strip()
     except Exception:
         pass
 
