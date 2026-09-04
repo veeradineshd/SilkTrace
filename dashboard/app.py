@@ -773,11 +773,38 @@ elif page == "Analytics":
     st.markdown("### 📋 Prediction History Logs")
     t1, t2, t3 = st.tabs(["⚡ Energy History", "👷 Productivity History", "🧵 Inspection History"])
     with t1:
-        st.dataframe(load_energy_history(), use_container_width=True)
+        eng_hist = load_energy_history()
+        st.dataframe(eng_hist, use_container_width=True)
+        if not eng_hist.empty:
+            st.download_button(
+                label="📥 Download Energy History (CSV)",
+                data=eng_hist.to_csv(index=False).encode("utf-8"),
+                file_name="energy_prediction_history.csv",
+                mime="text/csv",
+                key="dl_energy_hist"
+            )
     with t2:
-        st.dataframe(load_productivity_history(), use_container_width=True)
+        prod_hist = load_productivity_history()
+        st.dataframe(prod_hist, use_container_width=True)
+        if not prod_hist.empty:
+            st.download_button(
+                label="📥 Download Productivity History (CSV)",
+                data=prod_hist.to_csv(index=False).encode("utf-8"),
+                file_name="productivity_prediction_history.csv",
+                mime="text/csv",
+                key="dl_prod_hist"
+            )
     with t3:
-        st.dataframe(load_inspection_history(), use_container_width=True)
+        insp_hist = load_inspection_history()
+        st.dataframe(insp_hist, use_container_width=True)
+        if not insp_hist.empty:
+            st.download_button(
+                label="📥 Download Fabric Inspection History (CSV)",
+                data=insp_hist.to_csv(index=False).encode("utf-8"),
+                file_name="fabric_inspection_history.csv",
+                mime="text/csv",
+                key="dl_insp_hist"
+            )
 
     st.markdown("---")
     render_footer()
