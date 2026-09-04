@@ -12,10 +12,8 @@ env/
 # Large datasets (not committed — too large for GitHub)
 datasets/fabric_defect/
 
-# Large trained models (downloaded at runtime via GitHub Releases)
-models/energy_model.pkl
-models/energy_model_fast.pkl
-models/fabric_defect_model.keras
+# Temporary fast models
+models/*_fast.pkl
 
 # Generated/history files (runtime-generated, not source code)
 history/
