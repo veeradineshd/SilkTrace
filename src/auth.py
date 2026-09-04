@@ -202,7 +202,7 @@ def get_current_user_info() -> dict:
         user_email = getattr(st.user, "email",   "") or ""
         user_pic   = getattr(st.user, "picture", "") or ""
         user_role  = get_user_role(user_email)
-        return {
+        info = {
             "name": user_name,
             "email": user_email,
             "picture": user_pic,
@@ -210,6 +210,13 @@ def get_current_user_info() -> dict:
             "is_google": True,
             "is_authenticated": True,
         }
+        st.session_state["google_authenticated"] = True
+        st.session_state["google_user_info"] = info
+        return info
+
+    # 1b. Cached Google OIDC Session State
+    if st.session_state.get("google_authenticated", False) and "google_user_info" in st.session_state:
+        return st.session_state["google_user_info"]
 
     # 2. Check query params or session state for Demo Access
     is_demo = st.session_state.get("demo_authenticated", False) or (st.query_params.get("auth_mode") == "demo")
@@ -345,19 +352,25 @@ def handle_auth_gate():
     """Enforce authentication before rendering dashboard content with reconnect resilience.
 
     1. Native Streamlit Google OIDC: checks st.user.is_logged_in
-    2. Demo Access in session state: checks st.session_state['demo_authenticated']
-    3. Reconnect auto-restoration: recovers session from st.query_params['auth_mode']
-    4. Unauthenticated: renders login screen and calls st.stop()
+    2. Cached Google Session: checks st.session_state['google_authenticated']
+    3. Demo Access in session state: checks st.session_state['demo_authenticated']
+    4. Reconnect auto-restoration: recovers session from st.query_params['auth_mode']
+    5. Unauthenticated: renders login screen and calls st.stop()
     """
     # 1. Check native Streamlit Google OIDC
     if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+        st.session_state["google_authenticated"] = True
         return
 
-    # 2. Check Demo Access in session state
+    # 2. Check cached Google session state
+    if st.session_state.get("google_authenticated", False):
+        return
+
+    # 3. Check Demo Access in session state
     if st.session_state.get("demo_authenticated", False):
         return
 
-    # 3. Recover active session after WebSocket reconnect or tab reload
+    # 4. Recover active session after WebSocket reconnect or tab reload
     if st.query_params.get("auth_mode") == "demo":
         st.session_state["demo_authenticated"] = True
         st.session_state["demo_user_info"] = {
@@ -369,7 +382,7 @@ def handle_auth_gate():
         st.session_state["demo_user_role"] = "ADMIN"
         return
 
-    # 4. Not authenticated -> show login UI and stop execution
+    # 5. Not authenticated -> show login UI and stop execution
     render_login_screen()
     st.stop()
 
@@ -417,8 +430,10 @@ def render_sidebar_user_profile():
         _log.info("Sign Out clicked")
         st.query_params.clear()
         st.session_state["demo_authenticated"] = False
+        st.session_state["google_authenticated"] = False
         st.session_state.pop("demo_user_info", None)
         st.session_state.pop("demo_user_role", None)
+        st.session_state.pop("google_user_info", None)
         if is_google:
             try:
                 st.logout()

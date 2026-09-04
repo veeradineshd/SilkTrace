@@ -16,6 +16,7 @@ from src.config import (
     QUARTER_ENCODER_PATH,
     DEPARTMENT_ENCODER_PATH,
     DAY_ENCODER_PATH,
+    ENERGY_DATASET_PATH,
     ENERGY_MODEL_URL,
     FABRIC_MODEL_URL,
     FABRIC_CLASSES,
@@ -32,11 +33,32 @@ def _download_file(url: str, destination_path: Path):
                 f.write(chunk)
 
 def ensure_energy_model():
-    """Ensure energy model exists locally; download if missing or corrupt."""
+    """Ensure energy model exists locally; self-heal from dataset or download if missing."""
     ENERGY_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not ENERGY_MODEL_PATH.exists() or ENERGY_MODEL_PATH.stat().st_size == 0:
+        if ENERGY_DATASET_PATH.exists():
+            try:
+                from sklearn.ensemble import RandomForestRegressor
+                df = pd.read_csv(ENERGY_DATASET_PATH)
+                df_prep = df.copy()
+                df_prep['date'] = list(range(len(df_prep)))
+                df_prep['WeekStatus'] = df_prep['WeekStatus'].map({'Weekday': 0, 'Weekend': 1}).astype(int)
+                day_map: dict[str, int] = {'Friday': 0, 'Monday': 1, 'Saturday': 2, 'Sunday': 3, 'Thursday': 4, 'Tuesday': 5, 'Wednesday': 6}
+                df_prep['Day_of_week'] = df_prep['Day_of_week'].map(day_map).astype(int)
+                load_map: dict[str, int] = {'Light_Load': 0, 'Maximum_Load': 1, 'Medium_Load': 2}
+                df_prep['Load_Type'] = df_prep['Load_Type'].map(load_map).astype(int)
+
+                X = df_prep[['date', 'Lagging_Current_Reactive.Power_kVarh', 'Leading_Current_Reactive_Power_kVarh', 'CO2(tCO2)', 'Lagging_Current_Power_Factor', 'Leading_Current_Power_Factor', 'NSM', 'WeekStatus', 'Day_of_week', 'Load_Type']]
+                y = df_prep['Usage_kWh']
+
+                rf = RandomForestRegressor(n_estimators=30, max_depth=14, min_samples_split=4, max_features='sqrt', random_state=42, n_jobs=-1)
+                rf.fit(X, y)
+                joblib.dump(rf, ENERGY_MODEL_PATH, compress=3)
+                return
+            except Exception:
+                pass
         try:
-            st.info("⬇️ Downloading Energy Prediction model from GitHub Releases (~38 MB)...")
+            st.info("⬇️ Downloading Energy Prediction model from GitHub Releases...")
         except Exception:
             pass
         try:
@@ -44,7 +66,7 @@ def ensure_energy_model():
         except Exception as e:
             if ENERGY_MODEL_PATH.exists():
                 ENERGY_MODEL_PATH.unlink()
-            raise RuntimeError(f"Failed to download Energy Prediction model: {str(e)}")
+            raise RuntimeError(f"Failed to initialize Energy Prediction model: {str(e)}")
 
 def ensure_fabric_model():
     """Ensure fabric defect model exists locally; download if missing or corrupt."""
