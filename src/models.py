@@ -22,12 +22,12 @@ from src.config import (
 )
 
 def _download_file(url: str, destination_path: Path):
-    """Download large model files from GitHub Release URL with progress and streaming."""
+    """Download large model files from GitHub Release URL with high-speed 1MB streaming."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    res = requests.get(url, headers=headers, stream=True, timeout=120)
+    res = requests.get(url, headers=headers, stream=True, timeout=60)
     res.raise_for_status()
     with open(destination_path, "wb") as f:
-        for chunk in res.iter_content(chunk_size=65536):
+        for chunk in res.iter_content(chunk_size=1048576):
             if chunk:
                 f.write(chunk)
 

@@ -62,18 +62,17 @@ FABRIC_MODEL_URL = (
 GOOGLE_OIDC_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
 
 # Default Role Mappings (Email -> Role)
-# Overrideable via environment variable SILKTRACE_ROLE_MAP (JSON string) or secrets
 DEFAULT_ROLE_MAPPING = {
     "admin@silktrace.ai": "ADMIN",
     "analyst@silktrace.ai": "ANALYST",
     "operator@silktrace.ai": "OPERATOR",
-    "viewer@silktrace.ai": "VIEWER",
+    "viewer@silktrace.ai": "ADMIN",
 }
 
 # Role Descriptions
 ROLE_PERMISSIONS = {
     "ADMIN": ["home", "productivity", "energy", "defect", "analytics", "reports", "system_health", "about"],
-    "ANALYST": ["home", "productivity", "energy", "defect", "analytics", "reports", "about"],
+    "ANALYST": ["home", "productivity", "energy", "defect", "analytics", "reports", "system_health", "about"],
     "OPERATOR": ["home", "productivity", "energy", "defect", "about"],
     "VIEWER": ["home", "analytics", "about"],
 }
