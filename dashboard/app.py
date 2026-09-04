@@ -36,7 +36,12 @@ from src.config import (
     ENERGY_DATASET_PATH,
     FABRIC_RECOMMENDATIONS,
 )
-from src.auth import handle_auth_gate, render_sidebar_user_profile, is_feature_allowed_for_user
+from src.auth import (
+    handle_auth_gate,
+    render_sidebar_user_profile,
+    is_feature_allowed_for_user,
+    get_current_user_info,
+)
 from src.models import (
     load_encoders,
     load_productivity_model,
@@ -430,28 +435,6 @@ elif page == "Productivity Prediction":
     dept_enc = encoders.get("department") if isinstance(encoders, dict) else None
     day_enc = encoders.get("day") if isinstance(encoders, dict) else None
 
-    # Guard: ensure all encoders are loaded and fitted before accessing .classes_
-    _missing = [name for name, enc in [("date", date_enc), ("quarter", quarter_enc), ("department", dept_enc), ("day", day_enc)]
-                if enc is None or not hasattr(enc, "classes_") or not hasattr(enc, "transform")]
-    if _missing:
-        # Attempt a fresh uncached load to recover from transient failures
-        try:
-            st.cache_resource.clear()
-            _fresh = load_encoders()
-            date_enc = _fresh.get("date")
-            quarter_enc = _fresh.get("quarter")
-            dept_enc = _fresh.get("department")
-            day_enc = _fresh.get("day")
-            _missing = [name for name, enc in [("date", date_enc), ("quarter", quarter_enc), ("department", dept_enc), ("day", day_enc)]
-                        if enc is None or not hasattr(enc, "classes_") or not hasattr(enc, "transform")]
-        except Exception as _retry_err:
-            _encoder_load_error = str(_retry_err)
-
-    if _missing:
-        st.warning(f"⚠️ Categorical encoders not loaded from disk (missing: {', '.join(_missing)}). Using fallback classes.")
-        if _encoder_load_error:
-            st.code(f"Load error: {_encoder_load_error}", language="text")
-
     # Safe extraction of categorical classes with defaults to prevent any NoneType attribute errors
     default_dates = [
         "1/1/2015", "1/10/2015", "1/11/2015", "1/12/2015", "1/13/2015", "1/14/2015",
@@ -496,7 +479,7 @@ elif page == "Productivity Prediction":
     st.markdown("---")
 
     if st.button("🚀 Predict Productivity", use_container_width=True):
-        # Re-fetch encoders at click time to guard against cache invalidation
+        # Re-fetch encoders at click time
         _live_encoders = load_encoders()
         date_enc = _live_encoders.get("date")
         quarter_enc = _live_encoders.get("quarter")
@@ -535,8 +518,9 @@ elif page == "Productivity Prediction":
             st.success("✅ Prediction Completed Successfully!")
             render_timing_badge(elapsed)
 
-            # Record in history
-            user_email = st.session_state.get("user_info", {}).get("email", "System")
+            # Record in history with verified active user
+            active_user = get_current_user_info()
+            user_email = active_user.get("email") or "admin@silktrace.ai"
             log_productivity_prediction(date_val, dept_val, day_val, team_num, pred, user_email)
 
             # Display Result Card
@@ -606,26 +590,30 @@ elif page == "Energy Prediction":
             "Load_Type": load_map[load_type_str]
         }
 
-        with st.spinner("🤖 Executing Random Forest Energy Inference..."):
-            pred, elapsed, status = predict_energy(input_data)
+        try:
+            with st.spinner("🤖 Executing Random Forest Energy Inference..."):
+                pred, elapsed, status = predict_energy(input_data)
 
-        st.success("✅ Prediction Completed Successfully!")
-        render_timing_badge(elapsed)
+            st.success("✅ Prediction Completed Successfully!")
+            render_timing_badge(elapsed)
 
-        # Log history
-        user_email = st.session_state.get("user_info", {}).get("email", "System")
-        log_energy_prediction(date_num, week_status_str, day_name, load_type_str, pred, user_email)
+            # Log history with verified active user
+            active_user = get_current_user_info()
+            user_email = active_user.get("email") or "admin@silktrace.ai"
+            log_energy_prediction(date_num, week_status_str, day_name, load_type_str, pred, user_email)
 
-        # Result card
-        c1, c2, c3 = st.columns([1, 2, 1])
-        with c2:
-            st.markdown(f"""
-            <div class="silk-result-card">
-                <p style="color:#fde68a !important; font-weight:600; text-transform:uppercase;">⚡ Predicted Energy Usage</p>
-                <div class="silk-result-value" style="color:#f59e0b !important;">{pred:.2f} kWh</div>
-                <p style="color:#94a3b8 !important;">Status: <strong>{status}</strong></p>
-            </div>
-            """, unsafe_allow_html=True)
+            # Result card
+            c1, c2, c3 = st.columns([1, 2, 1])
+            with c2:
+                st.markdown(f"""
+                <div class="silk-result-card">
+                    <p style="color:#fde68a !important; font-weight:600; text-transform:uppercase;">⚡ Predicted Energy Usage</p>
+                    <div class="silk-result-value" style="color:#f59e0b !important;">{pred:.2f} kWh</div>
+                    <p style="color:#94a3b8 !important;">Status: <strong>{status}</strong></p>
+                </div>
+                """, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"❌ Error executing energy prediction: {str(e)}")
 
     st.markdown("---")
     render_footer()
@@ -664,7 +652,8 @@ elif page == "Fabric Defect Detection":
             st.success("✅ Quality Inspection Complete!")
             render_timing_badge(elapsed)
 
-            user_email = st.session_state.get("user_info", {}).get("email", "System")
+            active_user = get_current_user_info()
+            user_email = active_user.get("email") or "admin@silktrace.ai"
             log_fabric_inspection(pred_class, confidence, user_email)
 
             # Results Cards
@@ -703,7 +692,9 @@ elif page == "Fabric Defect Detection":
             st.markdown("### 📥 Export Reports & Summaries")
             
             inspection_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            user_name_str = st.session_state.get("user_info", {}).get("name", "SilkTrace Operator")
+            active_user = get_current_user_info()
+            user_name_str = active_user.get("name", "SilkTrace Operator")
+            user_email = active_user.get("email") or "admin@silktrace.ai"
 
             c1, c2 = st.columns(2)
             with c1:

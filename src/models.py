@@ -35,7 +35,10 @@ def ensure_energy_model():
     """Ensure energy model exists locally; download if missing or corrupt."""
     ENERGY_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not ENERGY_MODEL_PATH.exists() or ENERGY_MODEL_PATH.stat().st_size == 0:
-        st.info("⬇️ Downloading Energy Prediction model from GitHub Releases (~193 MB)...")
+        try:
+            st.info("⬇️ Downloading Energy Prediction model from GitHub Releases (~38 MB)...")
+        except Exception:
+            pass
         try:
             _download_file(ENERGY_MODEL_URL, ENERGY_MODEL_PATH)
         except Exception as e:
@@ -47,7 +50,10 @@ def ensure_fabric_model():
     """Ensure fabric defect model exists locally; download if missing or corrupt."""
     FABRIC_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     if not FABRIC_MODEL_PATH.exists() or FABRIC_MODEL_PATH.stat().st_size == 0:
-        st.info("⬇️ Downloading Fabric Defect Detection model from GitHub Releases (~47 MB)...")
+        try:
+            st.info("⬇️ Downloading Fabric Defect Detection model from GitHub Releases (~22 MB)...")
+        except Exception:
+            pass
         try:
             _download_file(FABRIC_MODEL_URL, FABRIC_MODEL_PATH)
         except Exception as e:

@@ -181,7 +181,7 @@ def is_google_auth_configured() -> bool:
 def get_user_role(email: str) -> str:
     """Determine role for a given email based on configuration or default mapping."""
     if not email:
-        return "ANALYST"
+        return "ADMIN" if st.session_state.get("demo_authenticated", False) else "ANALYST"
     role_map_raw = _get_secret_or_env("SILKTRACE_ROLE_MAP")
     role_map     = DEFAULT_ROLE_MAPPING.copy()
     if role_map_raw:
@@ -194,22 +194,58 @@ def get_user_role(email: str) -> str:
     return role_map.get(email.lower().strip(), "ANALYST")
 
 
+def get_current_user_info() -> dict:
+    """Retrieve consistent user metadata dictionary across native Google OIDC and Demo Mode."""
+    # 1. Native Streamlit Google OIDC
+    if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+        user_name  = getattr(st.user, "name",    "Google User") or "Google User"
+        user_email = getattr(st.user, "email",   "") or ""
+        user_pic   = getattr(st.user, "picture", "") or ""
+        user_role  = get_user_role(user_email)
+        return {
+            "name": user_name,
+            "email": user_email,
+            "picture": user_pic,
+            "role": user_role,
+            "is_google": True,
+            "is_authenticated": True,
+        }
+
+    # 2. Check query params or session state for Demo Access
+    is_demo = st.session_state.get("demo_authenticated", False) or (st.query_params.get("auth_mode") == "demo")
+    if is_demo:
+        demo_info = st.session_state.get("demo_user_info", {})
+        user_name  = demo_info.get("name",    "SilkTrace Admin (Demo)")
+        user_email = demo_info.get("email",   "admin@silktrace.ai")
+        user_pic   = demo_info.get("picture", "")
+        user_role  = st.session_state.get("demo_user_role", "ADMIN")
+        return {
+            "name": user_name,
+            "email": user_email,
+            "picture": user_pic,
+            "role": user_role,
+            "is_google": False,
+            "is_authenticated": True,
+        }
+
+    return {
+        "name": "Guest",
+        "email": "",
+        "picture": "",
+        "role": "VIEWER",
+        "is_google": False,
+        "is_authenticated": False,
+    }
+
+
 def is_feature_allowed_for_user(feature_key: str) -> bool:
     """Check if the current user session has permission to access a feature."""
-    # 1. Native Google OIDC user
-    if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
-        email = getattr(st.user, "email", "") or ""
-        role = get_user_role(email)
-        allowed = ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS["ANALYST"])
-        return feature_key in allowed
-
-    # 2. Demo Access mode
-    if st.session_state.get("demo_authenticated", False):
-        demo_role = st.session_state.get("demo_user_role", "ADMIN")
-        allowed = ROLE_PERMISSIONS.get(demo_role, ROLE_PERMISSIONS["ANALYST"])
-        return feature_key in allowed
-
-    return False
+    user = get_current_user_info()
+    if not user.get("is_authenticated", False):
+        return False
+    user_role = user.get("role", "ANALYST")
+    allowed = ROLE_PERMISSIONS.get(user_role, ROLE_PERMISSIONS["ANALYST"])
+    return feature_key in allowed
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -254,7 +290,7 @@ div.stButton>button:active{transform:translateY(0) !important;}
             f'<div><span class="silk-login-badge">Enterprise Intelligence &#8226; {APP_NAME}</span></div>'
             f'<p class="silk-login-tagline">{APP_DESCRIPTION}</p>'
             f'<div style="margin-bottom:1rem;">'
-            f'<div class="silk-feature-row"><div class="silk-feature-icon">&#9889;</div><div><div class="silk-feature-text">Energy Consumption Forecasting</div><div class="silk-feature-desc">Random Forest &amp; XGBoost time-series power analytics</div></div></div>'
+            f'<div class="silk-feature-row"><div class="silk-feature-icon">&#9889;</div><div><div class="silk-feature-text">Energy Consumption Forecasting</div><div class="silk-feature-desc">Random Forest industrial power analytics</div></div></div>'
             f'<div class="silk-feature-row"><div class="silk-feature-icon">&#128119;</div><div><div class="silk-feature-text">Garment Workforce Productivity</div><div class="silk-feature-desc">ML-driven target tracking &amp; optimization</div></div></div>'
             f'<div class="silk-feature-row"><div class="silk-feature-icon">&#128269;</div><div><div class="silk-feature-text">MobileNetV2 Fabric QC</div><div class="silk-feature-desc">Computer vision defect classification &amp; PDF reporting</div></div></div>'
             f'<div class="silk-feature-row"><div class="silk-feature-icon">&#128202;</div><div><div class="silk-feature-text">Executive KPI Analytics</div><div class="silk-feature-desc">Role-based access control &amp; automated reporting</div></div></div>'
@@ -291,7 +327,8 @@ div.stButton>button:active{transform:translateY(0) !important;}
                 "picture": "",
                 "sub":     "demo-admin-12345",
             }
-            st.session_state["demo_user_role"] = get_user_role("admin@silktrace.ai")
+            st.session_state["demo_user_role"] = "ADMIN"
+            st.query_params["auth_mode"] = "demo"
             st.rerun()
 
         st.markdown(
@@ -305,21 +342,34 @@ div.stButton>button:active{transform:translateY(0) !important;}
 # ──────────────────────────────────────────────────────────────────────────────
 
 def handle_auth_gate():
-    """Enforce authentication before rendering dashboard content.
+    """Enforce authentication before rendering dashboard content with reconnect resilience.
 
     1. Native Streamlit Google OIDC: checks st.user.is_logged_in
-    2. Demo Access: checks st.session_state['demo_authenticated']
-    3. Unauthenticated: renders login screen and calls st.stop()
+    2. Demo Access in session state: checks st.session_state['demo_authenticated']
+    3. Reconnect auto-restoration: recovers session from st.query_params['auth_mode']
+    4. Unauthenticated: renders login screen and calls st.stop()
     """
     # 1. Check native Streamlit Google OIDC
     if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
         return
 
-    # 2. Check Demo Access mode
+    # 2. Check Demo Access in session state
     if st.session_state.get("demo_authenticated", False):
         return
 
-    # 3. Not authenticated -> show login UI and stop execution
+    # 3. Recover active session after WebSocket reconnect or tab reload
+    if st.query_params.get("auth_mode") == "demo":
+        st.session_state["demo_authenticated"] = True
+        st.session_state["demo_user_info"] = {
+            "name":    "SilkTrace Admin (Demo)",
+            "email":   "admin@silktrace.ai",
+            "picture": "",
+            "sub":     "demo-admin-12345",
+        }
+        st.session_state["demo_user_role"] = "ADMIN"
+        return
+
+    # 4. Not authenticated -> show login UI and stop execution
     render_login_screen()
     st.stop()
 
@@ -330,25 +380,16 @@ def handle_auth_gate():
 
 def render_sidebar_user_profile():
     """Render logged-in user details, role badge, and logout button in sidebar."""
-    is_google_user = hasattr(st, "user") and getattr(st.user, "is_logged_in", False)
-    is_demo_user   = st.session_state.get("demo_authenticated", False)
-
-    if not is_google_user and not is_demo_user:
+    user = get_current_user_info()
+    if not user.get("is_authenticated", False):
         return
 
-    if is_google_user:
-        user_name  = getattr(st.user, "name",    "Google User") or "Google User"
-        user_email = getattr(st.user, "email",   "") or ""
-        user_pic   = getattr(st.user, "picture", "") or ""
-        user_role  = get_user_role(user_email)
-        badge_text = f"ROLE: {user_role}"
-    else:
-        demo_info  = st.session_state.get("demo_user_info", {})
-        user_name  = demo_info.get("name",    "SilkTrace Admin (Demo)")
-        user_email = demo_info.get("email",   "admin@silktrace.ai")
-        user_pic   = demo_info.get("picture", "")
-        user_role  = st.session_state.get("demo_user_role", "ADMIN")
-        badge_text = f"DEMO MODE: {user_role}"
+    user_name  = user.get("name", "User")
+    user_email = user.get("email", "")
+    user_pic   = user.get("picture", "")
+    user_role  = user.get("role", "ADMIN")
+    is_google  = user.get("is_google", False)
+    badge_text = f"ROLE: {user_role}" if is_google else f"DEMO MODE: {user_role}"
 
     st.sidebar.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
     if user_pic:
@@ -374,16 +415,17 @@ def render_sidebar_user_profile():
 
     if st.sidebar.button("🚪 Sign Out", use_container_width=True, key="sign_out_btn"):
         _log.info("Sign Out clicked")
-        if is_google_user:
+        st.query_params.clear()
+        st.session_state["demo_authenticated"] = False
+        st.session_state.pop("demo_user_info", None)
+        st.session_state.pop("demo_user_role", None)
+        if is_google:
             try:
                 st.logout()
             except Exception as exc:
                 _log.error("st.logout error: %s", exc)
                 st.rerun()
         else:
-            st.session_state["demo_authenticated"] = False
-            st.session_state.pop("demo_user_info", None)
-            st.session_state.pop("demo_user_role", None)
             st.rerun()
 
     st.sidebar.markdown("</div>", unsafe_allow_html=True)
